@@ -25,9 +25,12 @@ name: self-judge-wordle
 resources:
   infra: kubernetes
   image_id: 211125782317.dkr.ecr.us-west-2.amazonaws.com/hai-training/base-cuda-aws:cuda12.8.1-efa1.45.1-ofiv1.17.2-ncclv2.27.5-1-dev
-  accelerators: H100:8
-  cpus: 128
-  memory: 1900GB+
+  # 1.7B model: 1 GPU trains, 1 serves vLLM (separate concurrent processes; NCCL
+  # weight broadcast needs >= 2 GPUs, so 2 is the floor). Bump num_infer_gpus +
+  # accelerators + [inference.parallel].dp together if rollout generation is the bottleneck.
+  accelerators: H100:2
+  cpus: 32+
+  memory: 256GB+
   autostop:
     idle_minutes: 30
     down: true

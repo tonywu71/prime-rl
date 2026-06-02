@@ -9,8 +9,8 @@ max_steps = 200
 seq_len = 8192
 
 [deployment]
-num_train_gpus = 2
-num_infer_gpus = 6
+num_train_gpus = 1
+num_infer_gpus = 1
 
 [wandb]
 project = "self-judge-wordle"
@@ -37,7 +37,7 @@ max_completion_tokens = 1024
 [trainer] # Default trainer config
 
 [inference.parallel]
-dp = 6
+dp = 1
 
 [orchestrator.renderer]
 name = "qwen3"
