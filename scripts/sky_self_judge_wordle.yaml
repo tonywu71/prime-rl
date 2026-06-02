@@ -16,9 +16,10 @@
 #    .netrc must have access (or swap to an SSH-key mount).
 # 2. Branch state: `workdir: .` uploads THIS working tree (the committed
 #    per-step-judge-reward changes). No need to push the branch.
-# 3. Secrets: provide WANDB_API_KEY, HF_TOKEN, and PRIME_API_KEY via a
-#    gitignored .env at the repo root (mounted below and sourced in `run`).
-#    PRIME_API_KEY is needed for `prime env install will/wordle`.
+# 3. Secrets: provide HF_TOKEN and PRIME_API_KEY via a gitignored .env at the
+#    repo root (mounted below and sourced in `run`). PRIME_API_KEY is needed for
+#    `prime env install will/wordle`. WANDB credentials come from the mounted
+#    ~/.netrc (machine api.wandb.ai), so no WANDB_API_KEY is needed in .env.
 
 name: self-judge-wordle
 
@@ -41,7 +42,7 @@ workdir: .
 
 file_mounts:
   ~/sky_workdir/.env: .env
-  ~/.netrc: ~/.netrc
+  ~/.netrc: ~/.netrc  # submodule HTTPS auth + wandb credentials (machine api.wandb.ai)
 
 envs:
   # Treatment by default; override with --env CONFIG=configs/self_judge/wordle_ctrl.toml

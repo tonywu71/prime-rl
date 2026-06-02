@@ -102,11 +102,20 @@ def load_environment(
     # so grading never recurses into another label.
     original_get_model_response = env.get_model_response
 
-    async def _generate_progress_label(state: vf.State, prompt: vf.Messages) -> str:
+    async def _generate_progress_label(state: vf.State, prompt: vf.Messages, action: vf.Response) -> str:
         sampling_args: dict[str, Any] = {"max_tokens": progress_label_max_tokens}
         if progress_label_temperature is not None:
             sampling_args["temperature"] = progress_label_temperature
-        label_prompt = list(prompt) + [{"role": "user", "content": instruction}]
+        # Grade the action JUST generated. `prompt` is this turn's input and does
+        # NOT yet contain that action, so append it to the prefix before grading —
+        # otherwise the label would describe the PREVIOUS turn (an off-by-one that
+        # also leaves the terminal action ungraded, since no turn follows it).
+        action_message = getattr(action, "message", None)
+        action_content = getattr(action_message, "content", "") if action_message is not None else ""
+        label_prompt = list(prompt) + [
+            {"role": "assistant", "content": action_content or ""},
+            {"role": "user", "content": instruction},
+        ]
         try:
             response = await original_get_model_response(
                 state, label_prompt, tool_defs=None, sampling_args=sampling_args
@@ -119,7 +128,7 @@ def load_environment(
 
     async def get_model_response_with_label(state: vf.State, prompt: vf.Messages, *args: Any, **kw: Any):
         response = await original_get_model_response(state, prompt, *args, **kw)
-        label = await _generate_progress_label(state, prompt)
+        label = await _generate_progress_label(state, prompt, response)
         state.setdefault(STATE_PROGRESS_LABELS, []).append(label)
         return response
 
