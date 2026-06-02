@@ -17,10 +17,13 @@ Usage (orchestrator config)::
     alpha = 0.5
 """
 
+import logging
 import re
 from typing import Any
 
 import verifiers as vf
+
+logger = logging.getLogger(__name__)
 
 PROGRESS_LABELS: tuple[str, ...] = ("REGRESS", "NEUTRAL", "PROGRESS", "ACHIEVED")
 
@@ -70,7 +73,10 @@ def load_environment(
     original_get_model_response = env.get_model_response
 
     async def _generate_progress_label(state: vf.State, prompt: vf.Messages, action: vf.Response) -> str:
-        sampling_args: dict[str, Any] = {"max_tokens": progress_label_max_tokens}
+        # Inherit the rollout's sampling args (e.g. extra_body's return_token_ids,
+        # which the renderer needs to parse the response) and only override the budget.
+        sampling_args: dict[str, Any] = dict(state.get("sampling_args") or {})
+        sampling_args["max_tokens"] = progress_label_max_tokens
         if progress_label_temperature is not None:
             sampling_args["temperature"] = progress_label_temperature
         # `prompt` doesn't yet contain the action just generated; append it so the
@@ -85,7 +91,10 @@ def load_environment(
             response = await original_get_model_response(
                 state, label_prompt, tool_defs=None, sampling_args=sampling_args
             )
-        except Exception:
+        except Exception as error:
+            # Tolerate a failed label (don't kill the rollout) but never silently:
+            # a systematic failure would otherwise masquerade as 100% UNPARSED.
+            logger.warning(f"self-judge label completion failed: {error!r}")
             return UNPARSED_PROGRESS_LABEL
         message = getattr(response, "message", None)
         content = getattr(message, "content", "") if message is not None else ""
