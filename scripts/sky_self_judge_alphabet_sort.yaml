@@ -14,8 +14,8 @@ name: self-judge-alphabet-sort
 resources:
   infra: kubernetes
   image_id: 211125782317.dkr.ecr.us-west-2.amazonaws.com/hai-training/base-cuda-aws:cuda12.8.1-efa1.45.1-ofiv1.17.2-ncclv2.27.5-1-dev
-  # 1 trainer GPU + 3 vLLM GPUs (rollout generation is the bottleneck). Keep
-  # accelerators == num_train_gpus + num_infer_gpus and dp == num_infer_gpus.
+  # 2 trainer GPUs (FSDP-shard the 4B model + Adam states; 1 GPU OOMs) + 2 vLLM.
+  # Keep accelerators == num_train_gpus + num_infer_gpus and dp == num_infer_gpus.
   accelerators: H100:4
   cpus: 64+
   memory: 512GB+
@@ -55,7 +55,8 @@ run: |
   set -eux -o pipefail
   cd ~/sky_workdir
   export PATH="$HOME/.local/bin:$PATH"
-  set -a; [ -f .env ] && source .env; set +a
+  # set +x around the source so the secret values aren't echoed into the job logs.
+  set +x; set -a; [ -f .env ] && source .env; set +a; set -x
   # torch needs NCCL >= 2.28 (ncclDevCommCreate). The image's system NCCL 2.27.5 is
   # on LD_LIBRARY_PATH and gets loaded first (soname dedup beats torch's RPATH), so
   # preload torch's bundled 2.28.9 to win the resolution.

@@ -2,11 +2,11 @@
 # omitted, so advantages are not reshaped (plain GRPO). The wrapper still emits
 # labels, so the only difference vs. treatment is the reshaping — a clean A/B.
 max_steps = 200
-seq_len = 8192
+seq_len = 4096
 
 [deployment]
-num_train_gpus = 1
-num_infer_gpus = 3
+num_train_gpus = 2
+num_infer_gpus = 2
 
 [wandb]
 project = "self-judge-alphabet-sort"
@@ -36,7 +36,7 @@ max_completion_tokens = 1024
 [trainer]
 
 [inference.parallel]
-dp = 3
+dp = 2
 
 [orchestrator.renderer]
 name = "qwen3"
