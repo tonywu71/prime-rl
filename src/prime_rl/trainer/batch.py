@@ -66,8 +66,8 @@ def prepare_sample(training_example: TrainingSample, seq_len: int) -> MicroBatch
                 f"completion_advantages length {len(completion_advantages)} != "
                 f"completion_ids length {len(training_example.completion_ids)}"
             )
-        # Prompt tokens keep the scalar advantage (loss-masked anyway); completion
-        # tokens use the per-token vector from self-judge credit assignment.
+        # Prompt tokens keep the scalar (loss-masked anyway); completion tokens use
+        # the per-token self-judge vector.
         advantages = [training_example.advantage] * len(training_example.prompt_ids) + list(completion_advantages)
     reward = training_example.reward if training_example.reward is not None else float("nan")
     rewards = [reward] * len(input_ids)

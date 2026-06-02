@@ -1,34 +1,21 @@
-# SkyPilot launch for the per-turn self-judge Wordle experiment (single node, 8×H100).
+# SkyPilot launch for the per-turn self-judge Wordle experiment (single node).
 #
 #   sky launch -c self-judge-wordle scripts/sky_self_judge_wordle.yaml -y
-#   # control arm (same cluster shape, no advantage reshaping):
+#   # control arm (no advantage reshaping):
 #   sky launch -c self-judge-wordle-ctrl scripts/sky_self_judge_wordle.yaml \
 #       --env CONFIG=configs/self_judge/wordle_ctrl.toml -y
 #
-# `uv run rl` is the unified launcher: it spawns the trainer, inference server,
-# and orchestrator on this one node and splits the GPUs per the config's
-# [deployment] block (num_train_gpus=2, num_infer_gpus=6 → 8 total).
-#
-# ── PREREQUISITES (verify before launching) ────────────────────────────────
-# 1. Submodules: `uv sync --all-extras` needs the verifiers / renderers /
-#    research-environments submodules. The setup block inits them over HTTPS
-#    using ~/.netrc creds; research-environments is private, so the mounted
-#    .netrc must have access (or swap to an SSH-key mount).
-# 2. Branch state: `workdir: .` uploads THIS working tree (the committed
-#    per-step-judge-reward changes). No need to push the branch.
-# 3. Secrets: provide HF_TOKEN and PRIME_API_KEY via a gitignored .env at the
-#    repo root (mounted below and sourced in `run`). PRIME_API_KEY is needed for
-#    `prime env install will/wordle`. WANDB credentials come from the mounted
-#    ~/.netrc (machine api.wandb.ai), so no WANDB_API_KEY is needed in .env.
+# Needs a .env (see .env.dist) with PRIME_API_KEY + HF_TOKEN, and a ~/.netrc with
+# wandb creds (plus github.com for the private research-environments submodule).
 
 name: self-judge-wordle
 
 resources:
   infra: kubernetes
   image_id: 211125782317.dkr.ecr.us-west-2.amazonaws.com/hai-training/base-cuda-aws:cuda12.8.1-efa1.45.1-ofiv1.17.2-ncclv2.27.5-1-dev
-  # 1.7B model: 1 GPU trains, 1 serves vLLM (separate concurrent processes; NCCL
-  # weight broadcast needs >= 2 GPUs, so 2 is the floor). Bump num_infer_gpus +
-  # accelerators + [inference.parallel].dp together if rollout generation is the bottleneck.
+  # 2-GPU floor: trainer and vLLM run concurrently on separate GPUs, and NCCL
+  # weight broadcast needs >= 2. Scale num_infer_gpus + accelerators +
+  # [inference.parallel].dp together if rollout generation bottlenecks.
   accelerators: H100:2
   cpus: 32+
   memory: 256GB+
@@ -42,12 +29,12 @@ workdir: .
 
 file_mounts:
   ~/sky_workdir/.env: .env
-  ~/.netrc: ~/.netrc  # submodule HTTPS auth + wandb credentials (machine api.wandb.ai)
+  ~/.netrc: ~/.netrc  # submodule HTTPS auth + wandb credentials
 
 envs:
   # Treatment by default; override with --env CONFIG=configs/self_judge/wordle_ctrl.toml
   CONFIG: configs/self_judge/wordle.toml
-  # Launching from a git worktree breaks hatch-vcs version inference; harmless placeholder.
+  # A git worktree breaks hatch-vcs version inference; harmless placeholder.
   SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
 
 setup: |
@@ -55,12 +42,10 @@ setup: |
   curl -LsSf https://astral.sh/uv/0.10.12/install.sh | sh
   export PATH="$HOME/.local/bin:$PATH"
   cd ~/sky_workdir
-  # Resolve submodules over HTTPS (uses ~/.netrc) instead of the .gitmodules SSH URLs.
+  # .gitmodules uses SSH URLs; rewrite to HTTPS so ~/.netrc creds apply.
   git config --global url."https://github.com/".insteadOf "git@github.com:"
   git submodule update --init --recursive
-  # Full env so all workspace members (incl. self-judge-wrapper) + flash-attn install.
   uv sync --all-extras
-  # Install the Wordle hub env into the project venv (importable as `wordle`).
   uv tool install prime
   prime env install will/wordle
   uv run --no-sync python -c "import wordle, self_judge_wrapper; print('envs OK')"
@@ -69,8 +54,6 @@ run: |
   set -eux -o pipefail
   cd ~/sky_workdir
   export PATH="$HOME/.local/bin:$PATH"
-  # Load WANDB_API_KEY / HF_TOKEN / PRIME_API_KEY from the mounted .env.
   set -a; [ -f .env ] && source .env; set +a
-  # --no-sync: after `uv sync --all-extras` in setup, a re-sync would uninstall the
-  # editable package (see prime-rl README setup note).
+  # --no-sync: a re-sync would uninstall the editable workspace packages.
   uv run --no-sync rl @ "$CONFIG" --wandb

@@ -445,10 +445,8 @@ AdvantageConfig: TypeAlias = Annotated[
 class SelfJudgeConfig(BaseConfig):
     """Per-turn self-judge credit assignment (side-channel progress labels).
 
-    When set, the orchestrator reshapes each rollout's scalar advantage per turn
-    from the labels the env emits in ``state["_progress_labels"]``, preserving
-    total token mass. Leave unset to disable (scalar GRPO). The env must emit the
-    labels and list ``_progress_labels`` in its ``state_columns``.
+    Set to reshape advantages per turn from the env's ``_progress_labels``; leave
+    unset for scalar GRPO. Requires ``_progress_labels`` in the env's ``state_columns``.
     """
 
     alpha: Annotated[

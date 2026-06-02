@@ -1,19 +1,6 @@
-# Per-turn self-judge on Wordle — the recommended first experiment.
-#
-# Wraps the canonical `primeintellect/wordle` multi-turn text env with
-# `self-judge-wrapper`: after each guess the policy grades its own last guess (a
-# side-channel label), and the orchestrator reshapes that turn's per-token
-# advantage, mass-preserving. Wordle has genuine per-turn progress (each guess
-# narrows the answer), so the labels are meaningful and interpretable.
-#
-# Modeled on examples/wordle/rl.toml. Install the base env first:
-#   prime env install will/wordle      # importable as `wordle`
-# and install this wrapper package (workspace member `self-judge-wrapper`).
-#
-# `no_think = true` is REQUIRED here: the SFT model is a *thinking* Qwen3, so
-# without it the tiny-budget label completion is spent inside <think> and never
-# emits a label (→ 100% progress_labels/turn*/unparsed_rate). `/no_think`
-# suppresses reasoning for the label completion only.
+# Per-turn self-judge on Wordle — the recommended first experiment. Wordle has
+# genuine per-turn progress (each guess narrows the answer), so the labels mean
+# something. Modeled on examples/wordle/rl.toml.
 max_steps = 200
 seq_len = 8192
 
@@ -25,7 +12,7 @@ num_infer_gpus = 1
 project = "self-judge-wordle"
 name = "self-judge-wordle"
 
-[ckpt] # Checkpoint at the end of training
+[ckpt]
 
 [model]
 name = "PrimeIntellect/Qwen3-1.7B-Wordle-SFT"
@@ -43,18 +30,19 @@ clamp_fail_dampening = true
 id = "self-judge-wrapper"
 name = "wordle"
 state_columns = ["_progress_labels"]
+# no_think: the SFT model is a thinking Qwen3; without it the tiny label budget
+# is spent inside <think> and never emits a label (→ all UNPARSED).
 args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 16 }
 
 [orchestrator.train.sampling]
 max_completion_tokens = 1024
 
-[trainer] # Default trainer config
+[trainer]
 
 [inference.parallel]
 dp = 1
 
-# Qwen3 finetune with the standard PI template patch; always re-emits prior
-# <think> blocks. Match that with the qwen3 renderer's preserve_all_thinking.
+# The SFT model re-emits prior <think> blocks, so the renderer must preserve them.
 [orchestrator.renderer]
 name = "qwen3"
 preserve_all_thinking = true

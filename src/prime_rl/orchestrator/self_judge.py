@@ -1,39 +1,25 @@
 """Per-turn self-judge credit assignment (side-channel progress labels).
 
-GRPO assigns one scalar advantage per rollout, broadcast to every completion
-token. For multi-turn agentic tasks this mis-attributes credit: a failed
-rollout penalizes its good turns, a successful one reinforces its mistakes.
+GRPO broadcasts one scalar advantage to every completion token, so for multi-turn
+tasks a failed rollout penalizes its good turns and a successful one reinforces its
+mistakes. Here the env grades each turn (REGRESS/NEUTRAL/PROGRESS/ACHIEVED) and this
+module reshapes the action tokens' advantages from those labels. Two properties keep
+it honest:
 
-Here the policy grades each of its own turns with a discrete progress label
-(``REGRESS`` / ``NEUTRAL`` / ``PROGRESS`` / ``ACHIEVED``). The environment
-generates these labels as a *separate, short* completion per turn that shares
-the turn's KV prefix (see the ``self_judge_wrapper`` environment) and propagates
-the ordered list via ``state["_progress_labels"]``. The label tokens are never
-trained — this module only *reshapes* the action tokens' advantages.
+1. Sign-aware: ``w[t] = 1 + alpha * label_value[t] * sign(adv)`` — PROGRESS gets more
+   positive advantage in wins and REGRESS more blame in losses.
+2. Mass-preserving: multipliers are rescaled so ``sum_t m[t]*len[t] == total_len``,
+   so uniform labels reproduce scalar GRPO exactly — only differential labels signal.
 
-The reshaping has two anti-hacking properties:
-
-1. **Sign-aware weighting** — ``w[t] = 1 + alpha * label_value[t] * sign(adv)``.
-   In successful rollouts PROGRESS turns get more positive advantage and REGRESS
-   turns less; in failed rollouts REGRESS turns get more blame.
-2. **Token-mass preservation** — per-token multipliers are rescaled so that
-   ``sum_t m[t] * len[t] == total_completion_len``. Uniform labelling therefore
-   reproduces the scalar baseline exactly; only *differential* labels across a
-   rollout's turns create per-step signal.
-
-Two failure-mode-specific levers refine failed rollouts: ``flip_false_achieved``
-(ACHIEVED -> REGRESS, since the rollout eval is ground truth) and
-``clamp_fail_dampening`` (clamp weights to >= 1 so optimistic PROGRESS labels
-get full scalar blame rather than a dampened share).
+The ``flip_false_achieved`` and ``clamp_fail_dampening`` levers (see SelfJudgeSpec)
+stop optimistic labels from softening deserved blame on failed rollouts.
 """
 
 from dataclasses import dataclass
 
 from prime_rl.transport.types import TrainingSample
 
-# Label -> relative progress value. ACHIEVED is 2x PROGRESS to reflect both its
-# rarity (one turn per successful rollout) and its semantic weight (task done,
-# not just moved closer). REGRESS is symmetric to PROGRESS.
+#: ACHIEVED is 2x PROGRESS (rarer, and means done rather than closer).
 LABEL_VALUE: dict[str, float] = {
     "REGRESS": -1.0,
     "NEUTRAL": 0.0,
@@ -41,12 +27,10 @@ LABEL_VALUE: dict[str, float] = {
     "ACHIEVED": 2.0,
 }
 
-# Fallback for a missing / out-of-vocabulary label. NEUTRAL contributes zero to
-# the weight formula — i.e. that turn keeps the scalar GRPO advantage.
+#: Fallback for missing/unknown labels: zero weight contribution (keeps the scalar).
 DEFAULT_LABEL = "NEUTRAL"
 
-# Non-negative floor so a strong adverse label can't flip the advantage sign on
-# its own turn (a no-op with alpha <= 0.5 and label_value in [-1, 2]).
+#: Keeps a turn's weight positive so an adverse label can't flip the advantage sign.
 WEIGHT_FLOOR = 0.05
 
 
@@ -55,15 +39,11 @@ class SelfJudgeSpec:
     """Resolved self-judge weighting parameters.
 
     Args:
-        alpha: Per-turn weight magnitude. With ``alpha=0.5`` a PROGRESS turn gets
-            ``w=1.5`` and a REGRESS turn ``w=0.5`` in a successful rollout (signs
-            flip in failed rollouts). ``alpha=0`` collapses to scalar GRPO.
-        flip_false_achieved: In failed rollouts, re-interpret ACHIEVED as REGRESS.
-            The rollout eval is ground truth; a claimed-but-rejected completion is
-            a high-confidence mistake, not a near-success.
-        clamp_fail_dampening: In failed rollouts, clamp per-turn weights to
-            ``>= 1.0`` so optimistic PROGRESS labels get full scalar blame rather
-            than a reduced (dampened) share.
+        alpha: Per-turn weight magnitude; ``alpha=0`` collapses to scalar GRPO.
+        flip_false_achieved: In failed rollouts, treat ACHIEVED as REGRESS — the
+            eval is ground truth, so a claimed-but-rejected turn is a mistake.
+        clamp_fail_dampening: In failed rollouts, clamp weights to ``>= 1.0`` so
+            optimistic labels can't dampen deserved blame.
     """
 
     alpha: float
@@ -77,30 +57,19 @@ def attach_self_judge_advantages_to_rollout(
     scalar_advantage: float | None,
     spec: SelfJudgeSpec,
 ) -> dict[str, int | float] | None:
-    """Reshape per-token advantages from per-turn progress labels.
+    """Reshape per-token advantages from per-turn labels, writing into each sample.
 
     Pools turn spans across all of a rollout's samples (a rollout may split into
-    several ``TrainingSample``s when the extension property breaks), maps
-    ``progress_labels[k]`` to the k-th turn span positionally, and writes
-    mass-preserving per-token multipliers into each sample's
-    ``completion_advantages`` in place.
+    several when extension breaks), maps ``progress_labels[k]`` to the k-th span,
+    and writes mass-preserving multipliers into ``completion_advantages`` in place.
 
-    Args:
-        samples: All training samples of a single rollout.
-        progress_labels: One label per action turn, in turn order.
-        scalar_advantage: The rollout's scalar GRPO advantage.
-        spec: Resolved weighting parameters.
-
-    Returns:
-        Aggregated stats for wandb, or ``None`` when there is nothing to weight.
-        Fails open (leaves scalar advantages untouched) on a label/span count
-        mismatch, reporting it via ``n_label_span_mismatch``.
+    Returns aggregated stats for wandb, or ``None`` when there is nothing to weight.
+    Fails open (scalar advantages untouched) on a label/span count mismatch,
+    reporting it via ``n_label_span_mismatch``.
     """
     if not samples or scalar_advantage is None:
         return None
 
-    # (sample_idx, (start, end_exclusive)) for every assistant turn span, in
-    # rollout order (sample 0's turns, then sample 1's, ...).
     flat_spans: list[tuple[int, tuple[int, int]]] = []
     for sample_idx, sample in enumerate(samples):
         for span in _find_turn_token_spans(sample.completion_mask):
@@ -131,17 +100,15 @@ def attach_self_judge_advantages_to_rollout(
             per_token[pos] = advantage_t
 
     stats = _build_stats(labels, multipliers, span_lens, scalar_advantage, n_flipped)
-    # Per-turn multipliers for the orchestrator to surface (trace overlay); popped
-    # before the stats dict is aggregated into scalars.
+    # Popped by the orchestrator for trace overlays before stats are aggregated.
     stats["_multipliers"] = multipliers
     return stats
 
 
 def _find_turn_token_spans(completion_mask: list[bool]) -> list[tuple[int, int]]:
-    """Return (start, end_exclusive) spans of contiguous trainable tokens.
+    """(start, end) spans of contiguous trainable tokens — one per assistant turn.
 
-    Each span is one assistant turn's generated tokens; the inter-turn gaps
-    (env-response prompt re-injection) are ``mask=False`` and separate the spans.
+    Inter-turn gaps (env-response re-injection) are ``mask=False`` and split the spans.
     """
     spans: list[tuple[int, int]] = []
     start: int | None = None
@@ -196,10 +163,9 @@ def _build_stats(
     """Aggregate per-rollout self-judge diagnostics for wandb."""
     counts = {label: labels.count(label) for label in LABEL_VALUE}
     total_len = sum(span_lens)
-    # Token-weighted variance of the multipliers. Mass preservation forces the
-    # token-weighted mean to 1.0, so the within-rollout per-token advantage std is
-    # exactly |scalar_advantage| * sqrt(this) — the headline "is it redistributing?"
-    # signal (0 when labels are uniform, i.e. identical to flat GRPO).
+    # Mass preservation pins the token-weighted mean multiplier to 1, so the
+    # within-rollout per-token advantage std is |adv| * sqrt(this) — the headline
+    # "is it actually redistributing?" signal (0 iff labels are uniform).
     weighted_var = sum(length * (m - 1.0) ** 2 for m, length in zip(multipliers, span_lens)) / total_len
     return {
         "n_turns": len(labels),

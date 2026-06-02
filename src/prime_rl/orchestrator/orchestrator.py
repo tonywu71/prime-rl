@@ -81,29 +81,17 @@ SHUTDOWN_TIMEOUT_S = 300
 # rather than silently skipping training steps.
 MAX_EMPTY_BATCH_ATTEMPTS = 3
 
-# Per-turn-position progress-label logging: turns 0..CAP-1 get their own bucket;
-# later turns (sparse, only long rollouts reach them) collapse into one overflow bucket.
+# Turns 0..CAP-1 get their own bucket; later (sparse) turns collapse into an overflow.
 _LABEL_TURN_CAP = 8
-# Sentinel the env emits when a label completion can't be parsed (mirrors the
-# self_judge_wrapper env's UNPARSED_PROGRESS_LABEL). Counted explicitly so silent
-# parse failures are visible as progress_labels/turn*/unparsed_rate rather than
-# dropped or hidden as NEUTRAL.
+# Mirrors the wrapper's UNPARSED sentinel; counted so parse failures stay visible.
 _UNPARSED_LABEL = "UNPARSED"
 
 
 def _progress_label_distribution(rollouts: list[vf.RolloutOutput]) -> dict[str, float]:
-    """Per-turn-position progress-label rates across a batch (cross-arm comparable).
+    """Per-turn-position label rates across a batch, as a flat
+    ``{"progress_labels/turn<k>/<label>_rate": fraction}`` dict (``{}`` if no labels).
 
-    For each turn position (capped, with an overflow bucket) returns the fraction of
-    each self-judge label — plus an explicit ``unparsed`` bucket for any label the env
-    couldn't parse — among rollouts that reached that turn. Returns ``{}`` when no
-    rollout carries ``_progress_labels`` (a no-op for non-self-judge runs).
-
-    Args:
-        rollouts: The batch's rollout outputs (each may carry ``_progress_labels``).
-
-    Returns:
-        A flat ``{"progress_labels/turn<k>/<label>_rate": fraction}`` dict.
+    Cross-arm comparable: includes an explicit ``unparsed`` bucket per turn.
     """
     real_labels = set(LABEL_VALUE)
     label_names = list(LABEL_VALUE) + [_UNPARSED_LABEL]
@@ -576,8 +564,7 @@ async def orchestrate(config: OrchestratorConfig):
                 rollout_prefill_tokens += sample_prefill_tokens
                 if not rollout["is_filtered"]:
                     train_examples.append(sample)
-            # Reshape per-token advantages from the rollout's per-turn labels.
-            # Only trainable rollouts matter; mutates samples' completion_advantages in place.
+            # Mutates samples' completion_advantages in place; trainable rollouts only.
             if self_judge_spec is not None and samples and not rollout["is_filtered"]:
                 stats = attach_self_judge_advantages_to_rollout(
                     samples,
@@ -586,8 +573,7 @@ async def orchestrate(config: OrchestratorConfig):
                     self_judge_spec,
                 )
                 if stats is not None:
-                    # Surface per-turn multipliers on the rollout so the trace
-                    # renderer can overlay m_t per turn; keep stats scalar-only.
+                    # Multipliers go on the rollout for trace overlays; stats stay scalar.
                     multipliers = stats.pop("_multipliers", None)
                     if multipliers is not None:
                         rollout["_self_judge_multipliers"] = multipliers
