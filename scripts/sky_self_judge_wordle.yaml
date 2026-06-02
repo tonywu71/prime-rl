@@ -1,20 +1,20 @@
-# SkyPilot launch for the per-turn self-judge alphabet-sort experiment (single node).
+# SkyPilot launch for the per-turn self-judge Wordle experiment (single node).
 #
-#   sky launch -c self-judge-alphabet-sort scripts/sky_self_judge_alphabet_sort.yaml -y
+#   sky launch -c self-judge-wordle scripts/sky_self_judge_wordle.yaml -y
 #   # control arm (no advantage reshaping):
-#   sky launch -c self-judge-alphabet-sort-ctrl scripts/sky_self_judge_alphabet_sort.yaml \
-#       --env CONFIG=configs/self_judge/alphabet_sort_ctrl.toml -y
+#   sky launch -c self-judge-wordle-ctrl scripts/sky_self_judge_wordle.yaml \
+#       --env CONFIG=configs/self_judge/wordle_ctrl.toml -y
 #
-# Needs a .env (see .env.dist) with HF_TOKEN, and a ~/.netrc with wandb creds (plus
-# github.com for the private research-environments submodule). alphabet-sort is a
-# workspace env, so no hub install / PRIME_API_KEY is needed.
+# Needs a .env (see .env.dist) with PRIME_API_KEY (for the wordle hub install) +
+# HF_TOKEN, and a ~/.netrc with wandb creds (plus github.com for the private
+# research-environments submodule).
 
-name: self-judge-alphabet-sort
+name: self-judge-wordle
 
 resources:
   infra: kubernetes
   image_id: 211125782317.dkr.ecr.us-west-2.amazonaws.com/hai-training/base-cuda-aws:cuda12.8.1-efa1.45.1-ofiv1.17.2-ncclv2.27.5-1-dev
-  # 2 trainer GPUs (FSDP-shard the 4B model + Adam states; 1 GPU OOMs) + 2 vLLM.
+  # 1 trainer GPU (the 1.7B SFT model fits) + 3 vLLM (thinking-label rollouts are slow).
   # Keep accelerators == num_train_gpus + num_infer_gpus and dp == num_infer_gpus.
   accelerators: H100:4
   cpus: 64+
@@ -32,8 +32,8 @@ file_mounts:
   ~/.netrc: ~/.netrc  # submodule HTTPS auth + wandb credentials
 
 envs:
-  # Treatment by default; override with --env CONFIG=configs/self_judge/alphabet_sort_ctrl.toml
-  CONFIG: configs/self_judge/alphabet_sort.toml
+  # Treatment by default; override with --env CONFIG=configs/self_judge/wordle_ctrl.toml
+  CONFIG: configs/self_judge/wordle.toml
   # A git worktree breaks hatch-vcs version inference; harmless placeholder.
   SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
 
@@ -47,9 +47,10 @@ setup: |
   # Only deps/ is needed. configs/private (research-configs) is a private repo
   # unrelated to this run, and the netrc has no github.com creds for it.
   git submodule update --init --recursive deps
-  # --all-extras installs the workspace envs (incl. alphabet-sort + self-judge-wrapper).
   uv sync --all-extras
-  uv run --no-sync python -c "import alphabet_sort, self_judge_wrapper; print('envs OK')"
+  uv tool install prime
+  prime env install primeintellect/wordle
+  uv run --no-sync python -c "import wordle, self_judge_wrapper; print('envs OK')"
 
 run: |
   set -eux -o pipefail
