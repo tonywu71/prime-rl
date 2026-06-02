@@ -57,8 +57,9 @@ run: |
   cd ~/sky_workdir
   export PATH="$HOME/.local/bin:$PATH"
   set -a; [ -f .env ] && source .env; set +a
-  # torch 2.9 needs NCCL >= 2.28 (ncclDevCommCreate); the image's system NCCL 2.27.5
-  # on LD_LIBRARY_PATH otherwise shadows torch's bundled 2.28.9. Prepend the venv's.
-  export LD_LIBRARY_PATH="$(ls -d "$PWD"/.venv/lib/python*/site-packages/nvidia/nccl/lib):$LD_LIBRARY_PATH"
+  # torch needs NCCL >= 2.28 (ncclDevCommCreate). The image's system NCCL 2.27.5 is
+  # on LD_LIBRARY_PATH and gets loaded first (soname dedup beats torch's RPATH), so
+  # preload torch's bundled 2.28.9 to win the resolution.
+  export LD_PRELOAD="$(ls -d "$PWD"/.venv/lib/python*/site-packages/nvidia/nccl/lib)/libnccl.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
   # --no-sync: a re-sync would uninstall the editable workspace packages.
   uv run --no-sync rl @ "$CONFIG" --wandb
