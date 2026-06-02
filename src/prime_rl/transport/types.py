@@ -36,6 +36,9 @@ class TrainingSample(msgspec.Struct, array_like=True, gc=False, omit_defaults=Tr
     teacher_logprobs: list[float] | None = None
     advantage: float | None = None
     reward: float | None = None
+    # Per-token completion advantages. When set, overrides the scalar `advantage`
+    # broadcast in the packer (e.g. self-judge per-turn credit assignment).
+    completion_advantages: list[float] | None = None
 
     # Generic multimodal kwargs: flat dict keyed by the kwarg names the
     # model's forward expects (e.g. {"pixel_values": ..., "image_grid_thw":

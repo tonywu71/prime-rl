@@ -57,7 +57,18 @@ def prepare_sample(training_example: TrainingSample, seq_len: int) -> MicroBatch
     input_ids = training_example.prompt_ids + training_example.completion_ids
     loss_mask = training_example.prompt_mask + training_example.completion_mask
     inference_logprobs = [0.0] * len(training_example.prompt_ids) + training_example.completion_logprobs
-    advantages = [training_example.advantage] * len(input_ids)
+    completion_advantages = training_example.completion_advantages
+    if completion_advantages is None:
+        advantages = [training_example.advantage] * len(input_ids)
+    else:
+        if len(completion_advantages) != len(training_example.completion_ids):
+            raise ValueError(
+                f"completion_advantages length {len(completion_advantages)} != "
+                f"completion_ids length {len(training_example.completion_ids)}"
+            )
+        # Prompt tokens keep the scalar advantage (loss-masked anyway); completion
+        # tokens use the per-token vector from self-judge credit assignment.
+        advantages = [training_example.advantage] * len(training_example.prompt_ids) + list(completion_advantages)
     reward = training_example.reward if training_example.reward is not None else float("nan")
     rewards = [reward] * len(input_ids)
     position_ids = list(range(len(input_ids)))
