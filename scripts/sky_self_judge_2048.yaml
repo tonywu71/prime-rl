@@ -1,14 +1,14 @@
-# SkyPilot launch for the per-turn self-judge Wordle experiment (single node).
+# SkyPilot launch for the per-turn self-judge 2048 experiment (single node).
 #
-#   sky launch -c self-judge-wordle scripts/sky_self_judge_wordle.yaml -y
+#   sky launch -c self-judge-2048 scripts/sky_self_judge_2048.yaml -y
 #   # control arm (no advantage reshaping):
-#   sky launch -c self-judge-wordle-ctrl scripts/sky_self_judge_wordle.yaml \
-#       --env CONFIG=configs/self_judge/wordle_ctrl.toml -y
+#   sky launch -c self-judge-2048-ctrl scripts/sky_self_judge_2048.yaml \
+#       --env CONFIG=configs/self_judge/2048_ctrl.toml -y
 #
 # Needs a .env (see .env.dist) with PRIME_API_KEY + HF_TOKEN, and a ~/.netrc with
 # wandb creds (plus github.com for the private research-environments submodule).
 
-name: self-judge-wordle
+name: self-judge-2048
 
 resources:
   infra: kubernetes
@@ -31,8 +31,8 @@ file_mounts:
   ~/.netrc: ~/.netrc  # submodule HTTPS auth + wandb credentials
 
 envs:
-  # Treatment by default; override with --env CONFIG=configs/self_judge/wordle_ctrl.toml
-  CONFIG: configs/self_judge/wordle.toml
+  # Treatment by default; override with --env CONFIG=configs/self_judge/2048_ctrl.toml
+  CONFIG: configs/self_judge/2048.toml
   # A git worktree breaks hatch-vcs version inference; harmless placeholder.
   SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
 
@@ -48,8 +48,8 @@ setup: |
   git submodule update --init --recursive deps
   uv sync --all-extras
   uv tool install prime
-  prime env install primeintellect/wordle
-  uv run --no-sync python -c "import wordle, self_judge_wrapper; print('envs OK')"
+  prime env install hud/hud-text-2048
+  uv run --no-sync python -c "import hud_text_2048, self_judge_wrapper; print('envs OK')"
 
 run: |
   set -eux -o pipefail

@@ -1,6 +1,6 @@
-# Per-turn self-judge on Wordle — the recommended first experiment. Wordle has
-# genuine per-turn progress (each guess narrows the answer), so the labels mean
-# something. Modeled on examples/wordle/rl.toml.
+# Control arm: identical to 2048.toml but with [orchestrator.self_judge] omitted,
+# so advantages are not reshaped (plain GRPO). The wrapper still emits labels, so
+# the only difference vs. treatment is the reshaping — a clean A/B.
 max_steps = 200
 seq_len = 8192
 
@@ -9,8 +9,8 @@ num_train_gpus = 1
 num_infer_gpus = 3
 
 [wandb]
-project = "self-judge-wordle"
-name = "self-judge-wordle"
+project = "self-judge-2048"
+name = "self-judge-2048-ctrl"
 
 [ckpt]
 
@@ -23,17 +23,12 @@ name = "Qwen/Qwen3-4B-Instruct-2507"
 batch_size = 1024
 group_size = 16
 
-[orchestrator.self_judge]
-alpha = 0.5
-flip_false_achieved = true
-clamp_fail_dampening = true
-
 [[orchestrator.train.env]]
 id = "self-judge-wrapper"
-name = "wordle"
+name = "2048"
 state_columns = ["_progress_labels"]
 # Non-reasoning model: the label is a single word, so a tiny budget suffices.
-args = { base_env_id = "primeintellect/wordle", progress_label_max_tokens = 32 }
+args = { base_env_id = "hud-text-2048", progress_label_max_tokens = 32 }
 
 [orchestrator.train.sampling]
 max_completion_tokens = 1024
