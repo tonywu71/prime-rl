@@ -49,7 +49,7 @@ setup: |
   git submodule update --init --recursive deps
   uv sync --all-extras
   uv tool install prime
-  prime env install will/wordle
+  prime env install primeintellect/wordle
   uv run --no-sync python -c "import wordle, self_judge_wrapper; print('envs OK')"
 
 run: |
