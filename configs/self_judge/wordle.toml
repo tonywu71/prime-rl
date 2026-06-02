@@ -1,0 +1,60 @@
+# Per-turn self-judge on Wordle — the recommended first experiment.
+#
+# Wraps the canonical `primeintellect/wordle` multi-turn text env with
+# `self-judge-wrapper`: after each guess the policy grades its own last guess (a
+# side-channel label), and the orchestrator reshapes that turn's per-token
+# advantage, mass-preserving. Wordle has genuine per-turn progress (each guess
+# narrows the answer), so the labels are meaningful and interpretable.
+#
+# Modeled on examples/wordle/rl.toml. Install the base env first:
+#   prime env install will/wordle      # importable as `wordle`
+# and install this wrapper package (workspace member `self-judge-wrapper`).
+#
+# `no_think = true` is REQUIRED here: the SFT model is a *thinking* Qwen3, so
+# without it the tiny-budget label completion is spent inside <think> and never
+# emits a label (→ 100% progress_labels/turn*/unparsed_rate). `/no_think`
+# suppresses reasoning for the label completion only.
+max_steps = 200
+seq_len = 8192
+
+[deployment]
+num_train_gpus = 2
+num_infer_gpus = 6
+
+[wandb]
+project = "self-judge-wordle"
+name = "self-judge-wordle"
+
+[ckpt] # Checkpoint at the end of training
+
+[model]
+name = "PrimeIntellect/Qwen3-1.7B-Wordle-SFT"
+
+[orchestrator]
+batch_size = 1024
+group_size = 16
+
+[orchestrator.self_judge]
+alpha = 0.5
+flip_false_achieved = true
+clamp_fail_dampening = true
+
+[[orchestrator.train.env]]
+id = "self-judge-wrapper"
+name = "wordle"
+state_columns = ["_progress_labels"]
+args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 16 }
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[trainer] # Default trainer config
+
+[inference.parallel]
+dp = 6
+
+# Qwen3 finetune with the standard PI template patch; always re-emits prior
+# <think> blocks. Match that with the qwen3 renderer's preserve_all_thinking.
+[orchestrator.renderer]
+name = "qwen3"
+preserve_all_thinking = true

@@ -1,0 +1,44 @@
+# Control arm for the Wordle self-judge experiment.
+#
+# Identical to wordle.toml — the env still issues the second label completion per
+# turn (matching rollout cost and prompt distribution) and still logs
+# progress_labels/turn*/<label>_rate — but `[orchestrator.self_judge]` is OMITTED,
+# so advantages are NOT reshaped (plain scalar GRPO). This isolates the gradient
+# effect of per-turn reshaping from the cost of the extra label completion.
+max_steps = 200
+seq_len = 8192
+
+[deployment]
+num_train_gpus = 2
+num_infer_gpus = 6
+
+[wandb]
+project = "self-judge-wordle"
+name = "self-judge-wordle-ctrl"
+
+[ckpt] # Checkpoint at the end of training
+
+[model]
+name = "PrimeIntellect/Qwen3-1.7B-Wordle-SFT"
+
+[orchestrator]
+batch_size = 1024
+group_size = 16
+
+[[orchestrator.train.env]]
+id = "self-judge-wrapper"
+name = "wordle"
+state_columns = ["_progress_labels"]
+args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 16 }
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[trainer] # Default trainer config
+
+[inference.parallel]
+dp = 6
+
+[orchestrator.renderer]
+name = "qwen3"
+preserve_all_thinking = true

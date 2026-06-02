@@ -1,0 +1,47 @@
+# Control arm for the per-turn self-judge experiment.
+#
+# Identical to rl.toml — the env still issues the second label completion per turn
+# (so rollout cost and prompt distribution match the treatment) — but the
+# `[orchestrator.self_judge]` section is OMITTED, so the orchestrator does NOT
+# reshape advantages (plain scalar GRPO). This isolates the gradient effect of
+# the per-turn reshaping from the cost of the extra label completion.
+#
+# `progress_labels/turn*/<label>_rate` still logs (the env emits labels), so the
+# two arms are directly comparable on label distributions.
+max_steps = 100
+seq_len = 2048
+
+[wandb]
+project = "self-judge-debug"
+name = "self-judge-alphabet-sort-ctrl"
+
+[model]
+name = "Qwen/Qwen3-4B-Instruct-2507"
+
+[orchestrator]
+batch_size = 512
+group_size = 16
+
+[orchestrator.train.sampling]
+max_completion_tokens = 512
+
+[[orchestrator.train.env]]
+id = "self-judge-wrapper"
+name = "alphabet-sort"
+state_columns = ["_progress_labels"]
+args = { base_env_id = "alphabet-sort", base_args = { min_turns = 3, max_turns = 3 }, progress_label_max_tokens = 8 }
+
+[orchestrator.eval]
+interval = 50
+
+[[orchestrator.eval.env]]
+id = "self-judge-wrapper"
+name = "alphabet-sort"
+num_examples = 50
+group_size = 4
+state_columns = ["_progress_labels"]
+args = { base_env_id = "alphabet-sort", base_args = { min_turns = 3, max_turns = 3 }, progress_label_max_tokens = 8 }
+
+[trainer]
+
+[inference]
