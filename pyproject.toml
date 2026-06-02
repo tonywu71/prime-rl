@@ -85,6 +85,7 @@ envs = [
     "opencode-swe",
     "reverse-text",
     "science-env",
+    "self-judge-wrapper",
     "simpleqa-verified",
     "tau2-bench",
     "wiki-search",
@@ -133,6 +134,7 @@ members = [
     "deps/pydantic-config",
     "deps/verifiers",
     "deps/renderers",
+    "environments/self_judge_wrapper",
     "deps/verifiers/environments/alphabet_sort",
     "deps/verifiers/environments/math_python",
     "deps/verifiers/environments/reverse_text",
@@ -219,6 +221,7 @@ nixl-cu12 = false
 prime-rl-configs = { workspace = true }
 verifiers = { workspace = true }
 renderers = { workspace = true }
+self-judge-wrapper = { workspace = true }
 aime2024 = { workspace = true }
 aime2025 = { workspace = true }
 alphabet-sort = { workspace = true }
