@@ -15,7 +15,9 @@ name = "self-judge-wordle-ctrl"
 [ckpt]
 
 [model]
-name = "PrimeIntellect/Qwen3-1.7B-Wordle-SFT"
+# Trying a non-reasoning model. Thinking models work too: a prior run used
+# PrimeIntellect/Qwen3-1.7B-Wordle-SFT (a thinking Qwen3; labels parse after </think>).
+name = "Qwen/Qwen3-4B-Instruct-2507"
 
 [orchestrator]
 batch_size = 1024
@@ -25,9 +27,8 @@ group_size = 16
 id = "self-judge-wrapper"
 name = "wordle"
 state_columns = ["_progress_labels"]
-# The SFT model always reasons (ignores /no_think), so the label budget must cover
-# the full think block plus the word; the parser then reads the answer after </think>.
-args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 1024 }
+# Non-reasoning model: the label is a single word, so a tiny budget suffices.
+args = { base_env_id = "primeintellect/wordle", progress_label_max_tokens = 32 }
 
 [orchestrator.train.sampling]
 max_completion_tokens = 1024
@@ -37,7 +38,6 @@ max_completion_tokens = 1024
 [inference.parallel]
 dp = 3
 
-# The SFT model re-emits prior <think> blocks, so the renderer must preserve them.
 [orchestrator.renderer]
 name = "qwen3"
-preserve_all_thinking = true
+preserve_all_thinking = false
