@@ -13,12 +13,11 @@ name: self-judge-wordle
 resources:
   infra: kubernetes
   image_id: 211125782317.dkr.ecr.us-west-2.amazonaws.com/hai-training/base-cuda-aws:cuda12.8.1-efa1.45.1-ofiv1.17.2-ncclv2.27.5-1-dev
-  # 2-GPU floor: trainer and vLLM run concurrently on separate GPUs, and NCCL
-  # weight broadcast needs >= 2. Scale num_infer_gpus + accelerators +
-  # [inference.parallel].dp together if rollout generation bottlenecks.
-  accelerators: H100:2
-  cpus: 32+
-  memory: 256GB+
+  # 1 trainer GPU + 3 vLLM GPUs (rollout generation is the bottleneck). Keep
+  # accelerators == num_train_gpus + num_infer_gpus and dp == num_infer_gpus.
+  accelerators: H100:4
+  cpus: 64+
+  memory: 512GB+
   autostop:
     idle_minutes: 30
     down: true

@@ -6,7 +6,7 @@ seq_len = 8192
 
 [deployment]
 num_train_gpus = 1
-num_infer_gpus = 1
+num_infer_gpus = 3
 
 [wandb]
 project = "self-judge-wordle"
@@ -27,7 +27,7 @@ name = "wordle"
 state_columns = ["_progress_labels"]
 # The SFT model always reasons (ignores /no_think), so the label budget must cover
 # the full think block plus the word; the parser then reads the answer after </think>.
-args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 512 }
+args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 1024 }
 
 [orchestrator.train.sampling]
 max_completion_tokens = 1024
@@ -35,7 +35,7 @@ max_completion_tokens = 1024
 [trainer]
 
 [inference.parallel]
-dp = 1
+dp = 3
 
 # The SFT model re-emits prior <think> blocks, so the renderer must preserve them.
 [orchestrator.renderer]
