@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 import verifiers as vf
+from verifiers.types import UserMessage
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +80,10 @@ def load_environment(
         sampling_args["max_tokens"] = progress_label_max_tokens
         if progress_label_temperature is not None:
             sampling_args["temperature"] = progress_label_temperature
-        # `prompt` doesn't yet contain the action just generated; append it so the
-        # label grades this turn (not the previous one) and the final turn is graded.
-        # Strip the action's own <think> — the grader needs the action, not its
-        # reasoning, and re-rendering raw think tags breaks the renderer.
-        action_message = getattr(action, "message", None)
-        action_content = getattr(action_message, "content", "") if action_message is not None else ""
-        label_prompt = list(prompt) + [
-            {"role": "assistant", "content": _strip_think(action_content or "")},
-            {"role": "user", "content": instruction},
-        ]
+        # `prompt` doesn't yet contain the action just generated; append it (as the
+        # typed AssistantMessage the renderer requires — plain dicts are rejected) plus
+        # the instruction, so the label grades THIS turn and the final turn is graded.
+        label_prompt = list(prompt) + [action.message, UserMessage(content=instruction)]
         try:
             response = await original_get_model_response(
                 state, label_prompt, tool_defs=None, sampling_args=sampling_args
@@ -111,14 +106,6 @@ def load_environment(
     # Instance attribute shadows the class method (verifiers calls self.get_model_response).
     env.get_model_response = get_model_response_with_label
     return env
-
-
-def _strip_think(text: str) -> str:
-    """Drop the model's <think> reasoning, keeping the action that follows it."""
-    lower = text.lower()
-    if "</think>" in lower:
-        return text[lower.rindex("</think>") + len("</think>") :].strip()
-    return text.strip()
 
 
 def _parse_progress_label(text: str) -> str:
