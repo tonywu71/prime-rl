@@ -30,9 +30,9 @@ clamp_fail_dampening = true
 id = "self-judge-wrapper"
 name = "wordle"
 state_columns = ["_progress_labels"]
-# no_think: the SFT model is a thinking Qwen3; without it the tiny label budget
-# is spent inside <think> and never emits a label (→ all UNPARSED).
-args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 16 }
+# The SFT model always reasons (ignores /no_think), so the label budget must cover
+# the full think block plus the word; the parser then reads the answer after </think>.
+args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 512 }
 
 [orchestrator.train.sampling]
 max_completion_tokens = 1024

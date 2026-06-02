@@ -103,10 +103,19 @@ def load_environment(
 
 
 def _parse_progress_label(text: str) -> str:
-    """First label in the completion, else UNPARSED (so failures stay observable)."""
+    """The label from the answer, else UNPARSED (so failures stay observable).
+
+    Thinking models enumerate all four labels inside <think>, so grade only the
+    answer after </think>; an unclosed think block means the answer was truncated.
+    """
     if not text:
         return UNPARSED_PROGRESS_LABEL
-    match = _PROGRESS_LABEL_RE.search(text.upper())
+    answer = text.upper()
+    if "</THINK>" in answer:
+        answer = answer.rsplit("</THINK>", 1)[1]
+    elif "<THINK>" in answer:
+        return UNPARSED_PROGRESS_LABEL
+    match = _PROGRESS_LABEL_RE.search(answer)
     if match is None:
         return UNPARSED_PROGRESS_LABEL
     return match.group(1)
