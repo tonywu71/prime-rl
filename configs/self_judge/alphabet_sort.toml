@@ -1,6 +1,7 @@
-# Per-turn self-judge on hud/hud-text-2048. Every move has clear per-turn progress
-# (a merge raises the score, a wasted move fills the board), so the labels mean
-# something, and a non-reasoning model produces real outcome variance.
+# Per-turn self-judge on alphabet-sort (verifiers workspace env). A multi-turn
+# text task (no backend), so the per-turn labels have something to grade, and a
+# non-reasoning model can partially sort -> real outcome variance. Chosen because
+# single-turn envs (aime2025, medmcqa, reasoning-core) make the self-judge a no-op.
 max_steps = 200
 seq_len = 8192
 
@@ -9,8 +10,8 @@ num_train_gpus = 1
 num_infer_gpus = 3
 
 [wandb]
-project = "self-judge-2048"
-name = "self-judge-2048"
+project = "self-judge-alphabet-sort"
+name = "self-judge-alphabet-sort"
 
 [ckpt]
 
@@ -30,10 +31,10 @@ clamp_fail_dampening = true
 
 [[orchestrator.train.env]]
 id = "self-judge-wrapper"
-name = "2048"
+name = "alphabet-sort"
 state_columns = ["_progress_labels"]
 # Non-reasoning model: the label is a single word, so a tiny budget suffices.
-args = { base_env_id = "hud-text-2048", progress_label_max_tokens = 32 }
+args = { base_env_id = "alphabet-sort", progress_label_max_tokens = 32 }
 
 [orchestrator.train.sampling]
 max_completion_tokens = 1024

@@ -1,6 +1,6 @@
-# Control arm: identical to 2048.toml but with [orchestrator.self_judge] omitted,
-# so advantages are not reshaped (plain GRPO). The wrapper still emits labels, so
-# the only difference vs. treatment is the reshaping — a clean A/B.
+# Control arm: identical to alphabet_sort.toml but with [orchestrator.self_judge]
+# omitted, so advantages are not reshaped (plain GRPO). The wrapper still emits
+# labels, so the only difference vs. treatment is the reshaping — a clean A/B.
 max_steps = 200
 seq_len = 8192
 
@@ -9,8 +9,8 @@ num_train_gpus = 1
 num_infer_gpus = 3
 
 [wandb]
-project = "self-judge-2048"
-name = "self-judge-2048-ctrl"
+project = "self-judge-alphabet-sort"
+name = "self-judge-alphabet-sort-ctrl"
 
 [ckpt]
 
@@ -25,10 +25,10 @@ group_size = 16
 
 [[orchestrator.train.env]]
 id = "self-judge-wrapper"
-name = "2048"
+name = "alphabet-sort"
 state_columns = ["_progress_labels"]
 # Non-reasoning model: the label is a single word, so a tiny budget suffices.
-args = { base_env_id = "hud-text-2048", progress_label_max_tokens = 32 }
+args = { base_env_id = "alphabet-sort", progress_label_max_tokens = 32 }
 
 [orchestrator.train.sampling]
 max_completion_tokens = 1024

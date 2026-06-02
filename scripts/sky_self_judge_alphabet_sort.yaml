@@ -1,14 +1,15 @@
-# SkyPilot launch for the per-turn self-judge 2048 experiment (single node).
+# SkyPilot launch for the per-turn self-judge alphabet-sort experiment (single node).
 #
-#   sky launch -c self-judge-2048 scripts/sky_self_judge_2048.yaml -y
+#   sky launch -c self-judge-alphabet-sort scripts/sky_self_judge_alphabet_sort.yaml -y
 #   # control arm (no advantage reshaping):
-#   sky launch -c self-judge-2048-ctrl scripts/sky_self_judge_2048.yaml \
-#       --env CONFIG=configs/self_judge/2048_ctrl.toml -y
+#   sky launch -c self-judge-alphabet-sort-ctrl scripts/sky_self_judge_alphabet_sort.yaml \
+#       --env CONFIG=configs/self_judge/alphabet_sort_ctrl.toml -y
 #
-# Needs a .env (see .env.dist) with PRIME_API_KEY + HF_TOKEN, and a ~/.netrc with
-# wandb creds (plus github.com for the private research-environments submodule).
+# Needs a .env (see .env.dist) with HF_TOKEN, and a ~/.netrc with wandb creds (plus
+# github.com for the private research-environments submodule). alphabet-sort is a
+# workspace env, so no hub install / PRIME_API_KEY is needed.
 
-name: self-judge-2048
+name: self-judge-alphabet-sort
 
 resources:
   infra: kubernetes
@@ -31,8 +32,8 @@ file_mounts:
   ~/.netrc: ~/.netrc  # submodule HTTPS auth + wandb credentials
 
 envs:
-  # Treatment by default; override with --env CONFIG=configs/self_judge/2048_ctrl.toml
-  CONFIG: configs/self_judge/2048.toml
+  # Treatment by default; override with --env CONFIG=configs/self_judge/alphabet_sort_ctrl.toml
+  CONFIG: configs/self_judge/alphabet_sort.toml
   # A git worktree breaks hatch-vcs version inference; harmless placeholder.
   SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
 
@@ -46,10 +47,9 @@ setup: |
   # Only deps/ is needed. configs/private (research-configs) is a private repo
   # unrelated to this run, and the netrc has no github.com creds for it.
   git submodule update --init --recursive deps
+  # --all-extras installs the workspace envs (incl. alphabet-sort + self-judge-wrapper).
   uv sync --all-extras
-  uv tool install prime
-  prime env install hud/hud-text-2048
-  uv run --no-sync python -c "import hud_text_2048, self_judge_wrapper; print('envs OK')"
+  uv run --no-sync python -c "import alphabet_sort, self_judge_wrapper; print('envs OK')"
 
 run: |
   set -eux -o pipefail
