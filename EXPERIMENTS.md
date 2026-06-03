@@ -213,7 +213,40 @@ Re-run of Runs 8/9 on the same env, changing the two confounds that may have mas
 effect: (1) the **observation-aware judge** (should yield real REGRESS on failed tool
 calls → higher `within_rollout_adv_std`), and (2) **alpha 0.5 → 0.7**.
 
-**Status:** launching 2026-06-03.
+**Treatment wandb:** https://wandb.ai/hcompai/self-judge-automationbench/runs/6b116f2aae7d4f9b980b9dbffbac1efa
+**Control wandb:** https://wandb.ai/hcompai/self-judge-automationbench/runs/9d6d6cfb1f144268b8847485379ac755
+
+**Result (stopped at ~30–40 steps): the judge fix worked, but the A/B is still a tie.**
+
+The observation-aware judge did exactly what it was meant to:
+- REGRESS labels rose from ~0.01/rollout (Runs 8/9) to **~1.9/rollout** — the judge now
+  flags failed tool calls because it sees the error in `observation_{t+1}`.
+- `within_rollout_adv_std` rose from ~0.01 to **~0.054** (≈5×) — much stronger reshaping.
+
+But it did **not** translate into a reward advantage over plain GRPO:
+
+| Reward | Treatment (new judge, α=0.7) | Control (GRPO) |
+|---|---|---|
+| first 20 steps (aligned) | 0.406 | 0.408 |
+| steps 20–40 (aligned) | 0.641 | 0.657 |
+
+Both arms track each other; control is nominally ahead in the aligned window.
+
+**Conclusion (consistent across Runs 8/9 and 10/11): on AutomationBench-simple the
+per-turn self-judge ≈ GRPO.** Sharper, outcome-grounded per-turn credit does not help
+here because the task is not credit-misassignment-bottlenecked — partial-credit reward
+already gives ample group variance, so redistributing credit within a rollout changes
+nothing the optimizer needed. Per §07, the method should only help on tasks where one
+bad mid-trajectory action genuinely tanks many good ones; AutomationBench-simple (short,
+2–3 step, partial credit) is not that regime. Finding such a testbed is the open problem.
+
+**Known wart:** with the observation-aware judge the label prompt (conversation + verbose
+tool result + instruction) overflows `max_model_len` on the *tail* turns of long rollouts
+(`unparsed_rate` 0% on turns 0–3, ≤9% after) — caught → UNPARSED, non-fatal. A future
+fix is to bound the judge prompt to `[task + most-recent action + truncated observation]`
+rather than resending the full conversation.
+
+**Status:** both arms stopped 2026-06-03 after the tie was clear.
 
 ---
 
