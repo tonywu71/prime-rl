@@ -11,6 +11,7 @@ from prime_rl.orchestrator.advantage import compute_advantages
 from prime_rl.orchestrator.event_loop_lag import EventLoopLagMonitor
 from prime_rl.orchestrator.inference_metrics import InferenceMetricsCollector
 from prime_rl.orchestrator.patches import monkey_patch_chat_completion_logprobs, monkey_patch_oai_iterable_types
+from prime_rl.orchestrator.self_judge import LABEL_VALUE, SelfJudgeSpec, attach_self_judge_advantages_to_rollout
 from prime_rl.orchestrator.trajectories import (
     backfill_rollout_tokens,
     interleave_rollout,
@@ -79,6 +80,39 @@ SHUTDOWN_TIMEOUT_S = 300
 # rollouts are filtered out. After this many attempts, the orchestrator crashes
 # rather than silently skipping training steps.
 MAX_EMPTY_BATCH_ATTEMPTS = 3
+
+# Turns 0..CAP-1 get their own bucket; later (sparse) turns collapse into an overflow.
+_LABEL_TURN_CAP = 8
+# Mirrors the wrapper's UNPARSED sentinel; counted so parse failures stay visible.
+_UNPARSED_LABEL = "UNPARSED"
+
+
+def _progress_label_distribution(rollouts: list[vf.RolloutOutput]) -> dict[str, float]:
+    """Per-turn-position label rates across a batch, as a flat
+    ``{"progress_labels/turn<k>/<label>_rate": fraction}`` dict (``{}`` if no labels).
+
+    Cross-arm comparable: includes an explicit ``unparsed`` bucket per turn.
+    """
+    real_labels = set(LABEL_VALUE)
+    label_names = list(LABEL_VALUE) + [_UNPARSED_LABEL]
+    counts: dict[str, dict[str, int]] = {}
+    totals: dict[str, int] = {}
+    for rollout in rollouts:
+        progress_labels = rollout.get("_progress_labels")
+        if not progress_labels:
+            continue
+        for turn_idx, label in enumerate(progress_labels):
+            counted = label if label in real_labels else _UNPARSED_LABEL
+            bucket = str(turn_idx) if turn_idx < _LABEL_TURN_CAP else f"{_LABEL_TURN_CAP}plus"
+            counts.setdefault(bucket, {name: 0 for name in label_names})
+            counts[bucket][counted] += 1
+            totals[bucket] = totals.get(bucket, 0) + 1
+
+    distribution: dict[str, float] = {}
+    for bucket, total in totals.items():
+        for label in label_names:
+            distribution[f"progress_labels/turn{bucket}/{label.lower()}_rate"] = counts[bucket][label] / total
+    return distribution
 
 
 @clean_exit
@@ -191,6 +225,16 @@ async def orchestrate(config: OrchestratorConfig):
 
     # Build rollout filters
     rollout_filters = setup_filters(config.filters, vocab_size=tokenizer.vocab_size)
+
+    # Per-turn self-judge credit assignment (optional; env emits `_progress_labels`)
+    self_judge_spec: SelfJudgeSpec | None = None
+    if config.self_judge is not None:
+        self_judge_spec = SelfJudgeSpec(
+            alpha=config.self_judge.alpha,
+            flip_false_achieved=config.self_judge.flip_false_achieved,
+            clamp_fail_dampening=config.self_judge.clamp_fail_dampening,
+        )
+        logger.info(f"Self-judge per-turn credit assignment enabled ({self_judge_spec})")
 
     # Load environments
     logger.info("Loading training environments")
@@ -500,6 +544,7 @@ async def orchestrate(config: OrchestratorConfig):
         rollout_prefill_lens: list[int] = []
         rollout_decode_lens: list[int] = []
         rollout_samples_per_rollout: list[int] = []
+        self_judge_stats: list[dict[str, int | float]] = []
         num_prefill_tokens = 0
         num_decode_tokens = 0
         for rollout, samples in zip(train_rollouts, results):
@@ -519,6 +564,20 @@ async def orchestrate(config: OrchestratorConfig):
                 rollout_prefill_tokens += sample_prefill_tokens
                 if not rollout["is_filtered"]:
                     train_examples.append(sample)
+            # Mutates samples' completion_advantages in place; trainable rollouts only.
+            if self_judge_spec is not None and samples and not rollout["is_filtered"]:
+                stats = attach_self_judge_advantages_to_rollout(
+                    samples,
+                    rollout.get("_progress_labels") or [],
+                    rollout["advantage"],
+                    self_judge_spec,
+                )
+                if stats is not None:
+                    # Multipliers go on the rollout for trace overlays; stats stay scalar.
+                    multipliers = stats.pop("_multipliers", None)
+                    if multipliers is not None:
+                        rollout["_self_judge_multipliers"] = multipliers
+                    self_judge_stats.append(stats)
             rollout_prefill_lens.append(rollout_prefill_tokens)
             rollout_decode_lens.append(rollout_decode_tokens)
             num_prefill_tokens += rollout_prefill_tokens
@@ -721,6 +780,18 @@ async def orchestrate(config: OrchestratorConfig):
             env_filter_df = filter_df.loc[env_df.index]
             for name in filter_df.columns:
                 to_log[f"filters/{env}/{name}"] = env_filter_df[name].astype(float).mean()
+
+        # Self-judge per-turn credit-assignment diagnostics (averaged over rollouts)
+        if self_judge_spec is not None and self_judge_stats:
+            self_judge_df = pd.DataFrame(self_judge_stats)
+            for col in self_judge_df.columns:
+                to_log[f"self_judge/{col}"] = self_judge_df[col].mean()
+            to_log["self_judge/n_rollouts"] = len(self_judge_stats)
+
+        # Per-step progress-label distribution (logged whenever the env emits labels,
+        # so it works for the control arm too — a clean cross-arm comparison). For each
+        # turn position, the fraction of each label across all rollouts in the batch.
+        to_log.update(_progress_label_distribution(train_rollouts))
 
         # Log metrics to monitor(s)
         monitor.log(to_log, step=progress.step)

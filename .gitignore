@@ -203,3 +203,6 @@ debug_I2_zero_band
 outputs/
 
 third_party/
+# Local self-judge scratch notes (not for the repo)
+SELF_JUDGE_HANDOFF.md
+.sky_logs/

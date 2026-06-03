@@ -1,0 +1,75 @@
+# Per-turn self-judge on AutomationBench (simulated multi-step SaaS workflows).
+# AutomationBench is a StatefulToolEnv with PARTIAL-CREDIT rewards, so even a small
+# model that completes some workflow steps yields per-rollout reward variance — the
+# missing ingredient that made single-turn / binary-reward envs a self-judge no-op.
+# Scoped to the "simple" domain (~200 short 2-3 step tasks) so a 4B has a real shot
+# at non-zero reward; toolset="zapier" uses meta-tool discovery (compact prompts).
+max_steps = 200
+seq_len = 8192
+
+[deployment]
+# 4 trainer + 4 vLLM. A 4B with fp32 Adam needs the 4-way trainer mesh below
+# (cp=2 × dp_shard=2); 2 GPUs OOM'd even at step 1. Mirrors general_agent/rl_qwen3_4b.
+num_train_gpus = 4
+num_infer_gpus = 4
+
+[wandb]
+project = "self-judge-automationbench"
+name = "self-judge-automationbench"
+
+[ckpt]
+
+[model]
+# Non-reasoning instruct model: clean one-word labels with a tiny budget (no <think>
+# blowup), and general tool-use competence transfers without task-specific SFT.
+name = "Qwen/Qwen3-4B-Instruct-2507"
+
+[orchestrator]
+batch_size = 256
+group_size = 16
+
+[orchestrator.self_judge]
+# 0.7 (up from 0.5): stronger reshaping after the runs 8/9 tie. Paired with the
+# observation-aware judge (wrapper now grades the action after seeing its result).
+alpha = 0.7
+flip_false_achieved = true
+clamp_fail_dampening = true
+
+[[orchestrator.train.env]]
+id = "self-judge-wrapper"
+name = "automationbench"
+state_columns = ["_progress_labels"]
+# Bound the multi-turn rollout so heavy tool transcripts don't blow past seq_len.
+max_total_completion_tokens = 6144
+# toolset="zapier": meta-tools discovery (search_tools + execute_tool) instead of
+# dumping every schema — compact prompts, the benchmark's own default mode.
+args = { base_env_id = "AutomationBench", base_args = { domains = "simple", toolset = "zapier", max_steps = 12 }, progress_label_max_tokens = 16 }
+
+[orchestrator.train.sampling]
+# Tool-calling turns are short; 1536 is ample and keeps total tokens under seq_len.
+max_completion_tokens = 1536
+
+[trainer]
+
+# 4B + fp32 Adam OOMs without these: cp=2 shards the sequence, ac checkpoints
+# activations, dp_shard=2 (4 GPUs / cp=2) shards optimizer states. Proven recipe
+# from configs/general_agent/rl_qwen3_4b.toml (same model, same env class).
+[trainer.model]
+cp = 2
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.model.compile]
+
+[inference]
+gpu_memory_utilization = 0.85
+
+[inference.model]
+max_model_len = 8192
+
+[inference.parallel]
+dp = 4
+
+[orchestrator.renderer]
+name = "qwen3"

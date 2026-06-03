@@ -1,0 +1,46 @@
+# Control arm: identical to wordle.toml but with [orchestrator.self_judge] omitted,
+# so advantages are not reshaped (plain GRPO). The wrapper still emits labels, so the
+# only difference vs. treatment is the reshaping — a clean A/B.
+max_steps = 200
+seq_len = 8192
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 3
+
+[wandb]
+project = "self-judge-wordle"
+name = "self-judge-wordle-ctrl"
+
+[ckpt]
+
+[model]
+# SFT thinking Qwen3 (see wordle.toml): reward variance from step 0 + the grader
+# differentiates turns. Always reasons, so the label budget is generous and the
+# parser reads the verdict after </think>.
+name = "PrimeIntellect/Qwen3-1.7B-Wordle-SFT"
+
+[orchestrator]
+batch_size = 1024
+group_size = 16
+
+[[orchestrator.train.env]]
+id = "self-judge-wrapper"
+name = "wordle"
+state_columns = ["_progress_labels"]
+# 1024: the SFT model always reasons, so the label budget must cover the whole
+# <think> block plus the verdict (512 left ~56% UNPARSED).
+args = { base_env_id = "primeintellect/wordle", no_think = true, progress_label_max_tokens = 1024 }
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[trainer]
+
+[inference.parallel]
+dp = 3
+
+# The SFT model re-emits prior <think> blocks, so the renderer must preserve them.
+[orchestrator.renderer]
+name = "qwen3"
+preserve_all_thinking = true

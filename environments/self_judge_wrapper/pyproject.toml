@@ -1,0 +1,23 @@
+[project]
+name = "self-judge-wrapper"
+description = "Wraps a multi-turn env with per-turn self-judge progress labels (side-channel)"
+tags = ["self-judge", "multi-turn", "credit-assignment", "train"]
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "verifiers",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["self_judge_wrapper.py", "pyproject.toml", "README.md"]
+
+[tool.hatch.build.targets.wheel]
+include = ["self_judge_wrapper.py"]
+
+[tool.verifiers.eval]
+num_examples = 5
+rollouts_per_example = 3

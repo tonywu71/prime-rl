@@ -442,6 +442,27 @@ AdvantageConfig: TypeAlias = Annotated[
 ]
 
 
+class SelfJudgeConfig(BaseConfig):
+    """Per-turn self-judge credit assignment (side-channel progress labels).
+
+    Set to reshape advantages per turn from the env's ``_progress_labels``; leave
+    unset for scalar GRPO. Requires ``_progress_labels`` in the env's ``state_columns``.
+    """
+
+    alpha: Annotated[
+        float,
+        Field(ge=0.0, le=1.0, description="Per-turn weight magnitude; 0 collapses to scalar GRPO."),
+    ] = 0.3
+    flip_false_achieved: Annotated[
+        bool,
+        Field(description="In failed rollouts, treat ACHIEVED as REGRESS (the rollout eval is ground truth)."),
+    ] = True
+    clamp_fail_dampening: Annotated[
+        bool,
+        Field(description="In failed rollouts, clamp per-turn weights to >= 1.0 (no blame dampening)."),
+    ] = True
+
+
 # Flags rare tokens generated at high entropy (Section 5.2, https://arxiv.org/abs/2510.02387).
 class GibberishFilterConfig(BaseConfig):
     type: Literal["gibberish"] = "gibberish"
@@ -572,6 +593,9 @@ class OrchestratorConfig(BaseConfig):
     buffer: BufferConfig = BufferConfig()
 
     advantage: AdvantageConfig | None = DefaultAdvantageConfig()
+
+    self_judge: SelfJudgeConfig | None = None
+    """Per-turn self-judge credit assignment (None disables; env must emit ``_progress_labels``)."""
 
     filters: list[FilterConfig] = [GibberishFilterConfig(), RepetitionFilterConfig(), ZeroAdvantageFilterConfig()]
     """Rollout filters. Each filter can ``monitor`` (default) or ``enforce`` (skip rollouts)."""
