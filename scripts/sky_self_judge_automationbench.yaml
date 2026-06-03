@@ -46,7 +46,9 @@ setup: |
   # Only deps/ is needed. configs/private (research-configs) is a private repo
   # unrelated to this run, and the netrc has no github.com creds for it.
   git submodule update --init --recursive deps
-  uv sync --all-extras
+  # verifiers>=dev17 declares nemogym/openenv as conflicting extras, so plain
+  # --all-extras can't resolve; drop the two unused integration extras.
+  uv sync --all-extras --no-extra nemogym --no-extra openenv
   uv tool install prime
   # set +x around the source so PRIME_API_KEY isn't echoed into the job logs.
   set +x; set -a; [ -f .env ] && source .env; set +a; set -x
