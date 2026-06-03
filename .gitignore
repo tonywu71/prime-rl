@@ -206,3 +206,4 @@ third_party/
 # Local self-judge scratch notes (not for the repo)
 SELF_JUDGE_HANDOFF.md
 per_step_reward.html
+.sky_logs/
