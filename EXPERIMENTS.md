@@ -150,25 +150,39 @@ Key config decisions reached through iteration:
 
 ---
 
-### Runs 8 & 9 — AutomationBench + Qwen3-4B-Instruct-2507 (treatment + control — active)
+### Runs 8 & 9 — AutomationBench + Qwen3-4B-Instruct-2507 (treatment + control)
 
 **Treatment:** `configs/self_judge/automationbench.toml`, cluster `self-judge-ab`
 **Control:** `configs/self_judge/automationbench_ctrl.toml`, cluster `self-judge-ab-ctrl`
-**Model:** `Qwen/Qwen3-4B-Instruct-2507` (non-reasoning instruct)
+**Model:** `Qwen/Qwen3-4B-Instruct-2507` (non-reasoning instruct), `alpha=0.5`
+**Judge:** pre-fix (graded the action *without* seeing `observation_{t+1}`).
 
 The control runs the same wrapper (same rollout cost, same label logging) but omits
 `[orchestrator.self_judge]` → plain scalar GRPO. The only difference between arms is
 the advantage reshaping.
 
-**Status:** Both running as of 2026-06-03.
 **Treatment wandb:** https://wandb.ai/hcompai/self-judge-automationbench/runs/fcad75f402c1464a953b6b51951b40e8
 **Control wandb:** https://wandb.ai/hcompai/self-judge-automationbench/runs/70cf96bcc87f40d08cc3c3c1d0955689
 
-**Steps 0–50 metrics (treatment):**
-- Reward rises from 0.46 → ~0.73 over 50 steps; mean 0.560 vs control 0.523.
-- `within_rollout_adv_std` 0.007–0.014 — self-judge is actively reshaping. ✅
-- `unparsed_rate` ~1% — non-reasoning model, tiny 16-token budget. ✅
-- Label dist: PROGRESS-dominant (~80–95%/turn); REGRESS/NEUTRAL/ACHIEVED present.
+**Result (≈80 steps each): treatment ≈ control — no measurable effect.**
+
+| Metric | Treatment (self-judge) | Control (GRPO) |
+|---|---|---|
+| Reward, first 20 steps | 0.408 | 0.388 |
+| Reward, last 20 steps | 0.820 | 0.825 |
+| Reward, all steps | 0.654 | 0.640 |
+
+- Both arms learn equally well (reward ~0.39 → ~0.82). Treatment leads by a hair on
+  the all-steps mean but the last-20 is a dead heat (control nominally higher).
+- `within_rollout_adv_std` 0.001–0.024, `unparsed_rate` ~1% — labels parse cleanly but
+  reshaping is mild (PROGRESS-dominant).
+
+**Interpretation.** AutomationBench-simple is not *credit-misassignment-bottlenecked*:
+partial-credit reward already gives ample group variance, so within-rollout
+redistribution adds nothing (exactly the §07 prediction). Two confounds before
+concluding the method doesn't help: (1) the pre-fix judge couldn't see action
+outcomes, so REGRESS was rare → weak reshaping; (2) `alpha=0.5`. Runs 10/11 retest on
+`general-agent` with the observation-aware judge and `alpha=0.7`.
 
 **Note:** `within_rollout_adv_std` is smaller than on Wordle (~0.01 vs ~0.035) because
 tool calls mostly succeed (PROGRESS-dominant) in the simple domain. Raising `alpha` or
