@@ -29,7 +29,9 @@ batch_size = 256
 group_size = 16
 
 [orchestrator.self_judge]
-alpha = 0.5
+# 0.7 (up from 0.5): stronger reshaping after the runs 8/9 tie. Paired with the
+# observation-aware judge (wrapper now grades the action after seeing its result).
+alpha = 0.7
 flip_false_achieved = true
 clamp_fail_dampening = true
 
