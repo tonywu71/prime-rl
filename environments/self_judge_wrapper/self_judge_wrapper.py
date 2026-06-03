@@ -2,9 +2,18 @@
 
 Wraps any multi-turn verifiers env so that after each action the policy grades
 its own action with a discrete label (REGRESS/NEUTRAL/PROGRESS/ACHIEVED), via a
-second short completion off the same prefix. The label is never trained — it is
+short side-channel completion per turn. The label is never trained — it is
 appended to ``state["_progress_labels"]``, which prime-rl's
 ``orchestrator.self_judge`` consumes to reshape that turn's per-token advantages.
+
+The judge receives both the action AND its consequence so it grades based on
+actual outcome rather than action semantics alone:
+
+    judge_input = full_conversation_including_action_t
+                + UserMessage(observation_{t+1} + grading_instructions)
+
+This is implemented by patching ``env_response`` (called after the action has
+been appended to the rollout) rather than ``get_model_response``.
 
 Usage (orchestrator config)::
 
@@ -34,14 +43,16 @@ UNPARSED_PROGRESS_LABEL = "UNPARSED"
 
 STATE_PROGRESS_LABELS = "_progress_labels"
 
+# The observation text (observation_{t+1}) is prepended by the caller when
+# available, so the judge grades based on actual outcome (tool result, env reply).
 PROGRESS_INSTRUCTION = (
-    "Before continuing, grade YOUR MOST RECENT action using the conversation above. "
-    "Reply with EXACTLY ONE word, no punctuation, chosen from:\n"
-    "REGRESS - the last action moved away from the goal, undid progress, or caused an error.\n"
-    "NEUTRAL - no meaningful change, or this is the first action.\n"
-    "PROGRESS - the last action moved measurably closer to the goal.\n"
-    "ACHIEVED - the task goal is now fully satisfied.\n"
-    "Answer with only the single word."
+    "Grade the agent's MOST RECENT action (the last assistant message above). "
+    "Reply with EXACTLY ONE word — no punctuation:\n"
+    "REGRESS — the action moved away from the goal, caused an error, or failed.\n"
+    "NEUTRAL — no meaningful change, or this is the first action.\n"
+    "PROGRESS — the action moved measurably closer to the goal.\n"
+    "ACHIEVED — the task goal is now fully satisfied.\n"
+    "Answer:"
 )
 
 #: On thinking models a tiny label budget is otherwise spent inside <think>,
@@ -49,6 +60,23 @@ PROGRESS_INSTRUCTION = (
 _NO_THINK_SUFFIX = " /no_think"
 
 _PROGRESS_LABEL_RE = re.compile(r"\b(REGRESS|NEUTRAL|PROGRESS|ACHIEVED)\b")
+
+
+def _format_observation(env_messages: vf.Messages) -> str:
+    """Extract plain text from env response messages for the judge's context."""
+    parts: list[str] = []
+    for msg in env_messages:
+        content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "") or ""
+        if isinstance(content, str):
+            if content.strip():
+                parts.append(content.strip())
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text", "").strip()
+                    if text:
+                        parts.append(text)
+    return "\n".join(parts)
 
 
 def load_environment(
@@ -59,7 +87,10 @@ def load_environment(
     no_think: bool = False,
     **kwargs: Any,
 ) -> vf.Environment:
-    """Load a multi-turn hub env and wrap ``get_model_response`` with the label side-channel.
+    """Load a multi-turn hub env and wrap ``env_response`` with the label side-channel.
+
+    The judge fires after the environment responds, so it sees:
+        conversation_including_action_t + UserMessage(observation_{t+1} + instruction)
 
     Args:
         base_env_id: Verifiers env ID to wrap.
@@ -70,20 +101,28 @@ def load_environment(
     """
     env = vf.load_environment(base_env_id, **(base_args or {}))
     instruction = PROGRESS_INSTRUCTION + (_NO_THINK_SUFFIX if no_think else "")
-    # Grading calls the pre-wrap method so it never recurses into another label.
+    # Captured before patching so the judge call never recurses into env_response.
     original_get_model_response = env.get_model_response
+    original_env_response = env.env_response
 
-    async def _generate_progress_label(state: vf.State, prompt: vf.Messages, action: vf.Response) -> str:
+    async def _generate_progress_label(
+        state: vf.State,
+        messages: vf.Messages,
+        env_messages: vf.Messages,
+    ) -> str:
+        # messages already contains action_t as its last element (appended before
+        # env_response is called). Append a UserMessage that combines observation_{t+1}
+        # with the grading instruction so the judge sees actual outcomes.
+        observation = _format_observation(env_messages)
+        grading_content = f"{observation}\n\n{instruction}" if observation else instruction
+        label_prompt = list(messages) + [UserMessage(content=grading_content)]
+
         # Inherit the rollout's sampling args (e.g. extra_body's return_token_ids,
         # which the renderer needs to parse the response) and only override the budget.
         sampling_args: dict[str, Any] = dict(state.get("sampling_args") or {})
         sampling_args["max_tokens"] = progress_label_max_tokens
         if progress_label_temperature is not None:
             sampling_args["temperature"] = progress_label_temperature
-        # `prompt` doesn't yet contain the action just generated; append it (as the
-        # typed AssistantMessage the renderer requires — plain dicts are rejected) plus
-        # the instruction, so the label grades THIS turn and the final turn is graded.
-        label_prompt = list(prompt) + [action.message, UserMessage(content=instruction)]
         try:
             response = await original_get_model_response(
                 state, label_prompt, tool_defs=None, sampling_args=sampling_args
@@ -97,14 +136,16 @@ def load_environment(
         content = getattr(message, "content", "") if message is not None else ""
         return _parse_progress_label(content or "")
 
-    async def get_model_response_with_label(state: vf.State, prompt: vf.Messages, *args: Any, **kw: Any):
-        response = await original_get_model_response(state, prompt, *args, **kw)
-        label = await _generate_progress_label(state, prompt, response)
+    async def env_response_with_label(messages: vf.Messages, state: vf.State, **kw: Any):
+        # Call the real env_response first — state is mutated in place, env_msgs is
+        # observation_{t+1}. messages[-1] is action_t (already appended by the rollout).
+        env_msgs = await original_env_response(messages, state, **kw)
+        label = await _generate_progress_label(state, messages, env_msgs or [])
         state.setdefault(STATE_PROGRESS_LABELS, []).append(label)
-        return response
+        return env_msgs
 
-    # Instance attribute shadows the class method (verifiers calls self.get_model_response).
-    env.get_model_response = get_model_response_with_label
+    # Instance attribute shadows the class method (verifiers calls self.env_response).
+    env.env_response = env_response_with_label
     return env
 
 

@@ -103,7 +103,8 @@ multi-turn + variance + clean labels).
 
 ---
 
-### Runs 6 & 7 — Wordle + SFT, budget 1024 (treatment + control — current runs)
+### Runs 6 & 7 — Wordle + SFT, budget 1024 (treatment + control)
+
 **Treatment:** `configs/self_judge/wordle.toml`, cluster `self-judge-wordle`
 **Control:** `configs/self_judge/wordle_ctrl.toml`, cluster `self-judge-wordle-ctrl`
 
@@ -111,14 +112,14 @@ The control uses the same wrapper (same rollout cost, same label logging) but om
 `[orchestrator.self_judge]` → plain scalar GRPO. The only difference between arms is
 the advantage reshaping.
 
-**Status:** Both running as of 2026-06-02.
+**Status:** Completed 2026-06-02.
 **Treatment wandb:** https://wandb.ai/hcompai/self-judge-wordle/runs/e0d7014581084c8e8f067ac0b0a9454f
 **Control wandb:** https://wandb.ai/hcompai/self-judge-wordle/runs/ef4381973ab5479399bb956f68dff420
 
 **Step-0 metrics (treatment):**
 - Reward 0.70, seq length 2562 tokens, `within_rollout_adv_std=0.0351`
 - Label dist: turn0 85% UNPARSED, turns 1–4 ~52–59% UNPARSED (SFT model reasons;
-  budget must cover the whole `<think>` block). The parsed ~45% drive the reshaping.
+  budget must cover the whole `<think>` block plus the verdict (512 left ~56% UNPARSED))
 - ACHIEVED rising across turns (0.8%→13%): later guesses more often win ✅
 - REGRESS ~5%, NEUTRAL ~5%, PROGRESS ~26%: genuinely differentiated labels ✅
 
@@ -126,6 +127,52 @@ the advantage reshaping.
 rate (still ~55%). The labels aren't truncated — the grader sometimes doesn't emit a
 clean verdict. Parsed labels default to NEUTRAL (weight 1), diluting but not breaking
 the signal. The real lever for yield is grading-prompt engineering, not budget.
+
+---
+
+### Env search — AutomationBench (zapier/AutomationBench)
+
+**Why:** After the Wordle/SFT testbed, the goal was a harder multi-turn agentic task.
+See EXPERIMENTS.md §env-search for the prior single-turn dead-ends (aime2025,
+reasoning-core, openmed, hud-text-2048, alphabet-sort, arc-agi).
+
+`zapier/AutomationBench` is a `StatefulToolEnv` with **partial-credit rewards** — the
+crucial property every prior env lacked. Even incomplete workflows score > 0, so
+per-rollout reward variance is structural (not dependent on the model solving tasks
+fully). 47 simulated SaaS tools, no sandbox/docker/remote backend.
+
+Key config decisions reached through iteration:
+- `toolset="zapier"` (meta-tool discovery via 2 tools) instead of `toolset="api"` (dumps
+  all 47 schemas → huge prompts → OOM). The benchmark's own default.
+- `domains="simple"` (~200 short 2–3 step tasks) so the 4B can partially solve them.
+- 8-GPU recipe (`cp=2`, `ac.freq=1`, `compile`, 4-way trainer FSDP) copied from
+  `configs/general_agent/rl_qwen3_4b.toml`; 4-GPU configs OOM'd at step 1.
+
+---
+
+### Runs 8 & 9 — AutomationBench + Qwen3-4B-Instruct-2507 (treatment + control — active)
+
+**Treatment:** `configs/self_judge/automationbench.toml`, cluster `self-judge-ab`
+**Control:** `configs/self_judge/automationbench_ctrl.toml`, cluster `self-judge-ab-ctrl`
+**Model:** `Qwen/Qwen3-4B-Instruct-2507` (non-reasoning instruct)
+
+The control runs the same wrapper (same rollout cost, same label logging) but omits
+`[orchestrator.self_judge]` → plain scalar GRPO. The only difference between arms is
+the advantage reshaping.
+
+**Status:** Both running as of 2026-06-03.
+**Treatment wandb:** https://wandb.ai/hcompai/self-judge-automationbench/runs/fcad75f402c1464a953b6b51951b40e8
+**Control wandb:** https://wandb.ai/hcompai/self-judge-automationbench/runs/70cf96bcc87f40d08cc3c3c1d0955689
+
+**Steps 0–50 metrics (treatment):**
+- Reward rises from 0.46 → ~0.73 over 50 steps; mean 0.560 vs control 0.523.
+- `within_rollout_adv_std` 0.007–0.014 — self-judge is actively reshaping. ✅
+- `unparsed_rate` ~1% — non-reasoning model, tiny 16-token budget. ✅
+- Label dist: PROGRESS-dominant (~80–95%/turn); REGRESS/NEUTRAL/ACHIEVED present.
+
+**Note:** `within_rollout_adv_std` is smaller than on Wordle (~0.01 vs ~0.035) because
+tool calls mostly succeed (PROGRESS-dominant) in the simple domain. Raising `alpha` or
+sharpening the grading prompt to penalise partial/stalled actions would amplify reshaping.
 
 ---
 
@@ -143,8 +190,11 @@ All three requirements must hold simultaneously:
    (REGRESS on a bad move, PROGRESS on a good one). Monotonic tasks (alphabet-sort) give
    uniform PROGRESS; single-turn envs give one label.
 
-**Only Wordle + `Qwen3-1.7B-Wordle-SFT` satisfied all three** — differentiated labels,
-real reward variance from step 0, and the self-judge actively reshapes (`within_rollout_adv_std>0`).
+**Wordle + `Qwen3-1.7B-Wordle-SFT`** was the first testbed to satisfy all three. It
+required task-specific SFT and produced ~55% UNPARSED labels (thinking model).
+
+**AutomationBench + `Qwen3-4B-Instruct-2507`** (Runs 8/9) satisfies all three cleanly:
+no task-specific SFT, ~1% UNPARSED, and partial-credit reward gives structural variance.
 
 ---
 
@@ -164,3 +214,7 @@ required for any run on this setup:
 | Append typed `AssistantMessage`/`UserMessage` | Renderer's `_to_renderer_message` rejects plain dicts with `ValueError` |
 | `set +x` around `source .env` | `set -eux` echoed secrets into sky job logs (rotate `PRIME_API_KEY` + `HF_TOKEN`) |
 | 2 trainer GPUs for the 4B model | Adam optimizer states + 4B weights OOM on one 80 GB H100 |
+| `prime` CLI key was stale in `~/.prime/config.json` | CLI reads config.json, not `PRIME_API_KEY` env var; fixed by overwriting the key |
+| `toolset="api"` OOM'd the 4B trainer | Dumps all 47 tool schemas into every prompt → huge sequences; `toolset="zapier"` uses 2 meta-tools instead |
+| 4-way trainer mesh required for 4B on agentic env | 2-GPU FSDP OOM'd at step 1; `cp=2` + `ac.freq=1` + `compile` (from `general_agent/rl_qwen3_4b.toml`) fits in 79 GiB |
+| Judge context redesign: hook `env_response` not `get_model_response` | Original judge saw action but not its consequence; new design appends `UserMessage(observation_{t+1} + instruction)` so the judge grades on actual outcome |
