@@ -190,6 +190,26 @@ sharpening the grading prompt to penalise partial/stalled actions would amplify 
 
 ---
 
+### Runs 10 & 11 — general-agent + Qwen3-4B-Instruct-2507, alpha=0.7 (treatment + control)
+
+**Treatment:** `configs/self_judge/general_agent.toml`, cluster `self-judge-ga`
+**Control:** `configs/self_judge/general_agent_ctrl.toml`, cluster `self-judge-ga-ctrl`
+**Judge:** observation-aware (sees the tool result before grading — the `env_response` fix).
+
+Retest of the methodology on a second multi-turn tool env, changing the two confounds
+from Runs 8/9: the **observation-aware judge** (should produce real REGRESS on failed
+tool calls → larger `within_rollout_adv_std`) and **alpha=0.7**. `general-agent`
+(`general_agent.solver.local`, a `vf.ToolEnv` over synthetic DB tasks) requires
+`verifiers>=0.1.15.dev17`, so `deps/verifiers` was bumped from dev11 → dev17.
+
+**Caveat going in:** general-agent reward is mostly binary (DB-state hash match), so
+reward variance depends on the 4B partially solving the mixed-difficulty taskset — if
+it flails to ~0 or saturates, the self-judge is a no-op regardless of the judge fix.
+
+**Status:** launching 2026-06-03.
+
+---
+
 ## What worked: the right testbed for the self-judge
 
 All three requirements must hold simultaneously:

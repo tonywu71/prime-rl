@@ -1,0 +1,69 @@
+# Per-turn self-judge on general-agent (synthetic tool-use DB tasks, τ²-bench-style).
+# Retest after AutomationBench showed self-judge ≈ GRPO: this run uses the
+# observation-aware judge (sees the tool result before grading) and a stronger
+# alpha=0.7, on a different multi-turn tool env. general-agent reward is mostly
+# binary (DB-state match), so reward variance depends on the 4B partially solving
+# tasks across the mixed-difficulty taskset.
+max_steps = 200
+seq_len = 8192
+
+[deployment]
+# 4 trainer (cp=2 × dp_shard=2 for the 4B + fp32 Adam) + 4 vLLM.
+num_train_gpus = 4
+num_infer_gpus = 4
+
+[wandb]
+project = "self-judge-general-agent"
+name = "self-judge-general-agent"
+
+[ckpt]
+
+[model]
+name = "Qwen/Qwen3-4B-Instruct-2507"
+
+[orchestrator]
+batch_size = 256
+group_size = 16
+
+[orchestrator.self_judge]
+# 0.7 (up from 0.5 on AutomationBench): the labels reshape harder, so the
+# treatment-vs-control gap is larger if per-turn credit actually helps here.
+alpha = 0.7
+flip_false_achieved = true
+clamp_fail_dampening = true
+
+[[orchestrator.train.env]]
+id = "self-judge-wrapper"
+name = "general-agent"
+state_columns = ["_progress_labels"]
+max_total_completion_tokens = 6144
+# base_env_id "general-agent" → general_agent.solver.local (ToolEnv, policy-as-agent);
+# max_turns bounded so tool transcripts stay under seq_len.
+args = { base_env_id = "general-agent", base_args = { max_turns = 20 }, progress_label_max_tokens = 16 }
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1536
+
+[trainer]
+
+# Proven 4B trainer recipe (see general_agent/rl_qwen3_4b.toml): cp=2 shards the
+# sequence, ac checkpoints activations, dp_shard=2 shards optimizer states.
+[trainer.model]
+cp = 2
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.model.compile]
+
+[inference]
+gpu_memory_utilization = 0.85
+
+[inference.model]
+max_model_len = 8192
+
+[inference.parallel]
+dp = 4
+
+[orchestrator.renderer]
+name = "qwen3"

@@ -1,0 +1,55 @@
+# Control arm: identical to general_agent.toml but with [orchestrator.self_judge]
+# omitted, so advantages are not reshaped (plain GRPO). The wrapper still emits labels
+# (same rollout cost, same label logging) — the only difference vs. treatment is the
+# advantage reshaping, giving a clean A/B.
+max_steps = 200
+seq_len = 8192
+
+[deployment]
+num_train_gpus = 4
+num_infer_gpus = 4
+
+[wandb]
+project = "self-judge-general-agent"
+name = "self-judge-general-agent-ctrl"
+
+[ckpt]
+
+[model]
+name = "Qwen/Qwen3-4B-Instruct-2507"
+
+[orchestrator]
+batch_size = 256
+group_size = 16
+
+[[orchestrator.train.env]]
+id = "self-judge-wrapper"
+name = "general-agent"
+state_columns = ["_progress_labels"]
+max_total_completion_tokens = 6144
+args = { base_env_id = "general-agent", base_args = { max_turns = 20 }, progress_label_max_tokens = 16 }
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1536
+
+[trainer]
+
+[trainer.model]
+cp = 2
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.model.compile]
+
+[inference]
+gpu_memory_utilization = 0.85
+
+[inference.model]
+max_model_len = 8192
+
+[inference.parallel]
+dp = 4
+
+[orchestrator.renderer]
+name = "qwen3"
