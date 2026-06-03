@@ -1,0 +1,1107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Per-step rewards in prime-rl: two ways to weight a token</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{
+    delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
+    trust:true, strict:false, throwOnError:false,
+    macros:{
+      '\\rew':  '\\htmlClass{kv-rew}{r}',
+      '\\adv':  '\\htmlClass{kv-adv}{A}',
+      '\\ret':  '\\htmlClass{kv-ret}{G}',
+      '\\val':  '\\htmlClass{kv-val}{V}',
+      '\\pol':  '\\htmlClass{kv-pol}{\\pi}',
+      '\\disc': '\\htmlClass{kv-disc}{\\gamma}',
+      '\\wt':   '\\htmlClass{kv-wt}{w}',
+      '\\vt':   '\\htmlClass{kv-vt}{v}',
+      '\\mt':   '\\htmlClass{kv-mt}{m}',
+      '\\al':   '\\htmlClass{kv-al}{\\alpha}',
+      '\\len':  '\\htmlClass{kv-len}{\\ell}'
+    }
+  })">
+</script>
+
+<style>
+:root {
+  --bg:      #fbfbfa;
+  --panel:   #ffffff;
+  --line:    #e6e3da;
+  --ink:     #23262b;
+  --mid:     #565a61;
+  --dim:     #8a8d93;
+  --accent:  #2f6f4f;
+  --code-bg: #f6f4ee;
+  --mono:    ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+  /* variable colors — match KaTeX macros */
+  --c-rew:  #c0392b;
+  --c-adv:  #2f6f4f;
+  --c-ret:  #6b3fa0;
+  --c-val:  #1d6fb8;
+  --c-pol:  #0b7285;
+  --c-disc: #b06a00;
+  --c-wt:   #b06a00;
+  --c-vt:   #7b3fa0;
+  --c-mt:   #0b7285;
+  --c-al:   #d4691e;
+  /* label colors */
+  --regress:  #c0392b;
+  --neutral:  #5b6470;
+  --progress: #2f6f4f;
+  --achieved: #6b3fa0;
+}
+* { box-sizing: border-box; }
+/* colored variables inside KaTeX (set via \htmlClass in the macro defs) */
+.kv-rew  { color: var(--c-rew); }
+.kv-adv  { color: var(--c-adv); }
+.kv-ret  { color: var(--c-ret); }
+.kv-val  { color: var(--c-val); }
+.kv-pol  { color: var(--c-pol); }
+.kv-disc { color: var(--c-disc); }
+.kv-wt   { color: var(--c-wt); }
+.kv-vt   { color: var(--c-vt); }
+.kv-mt   { color: var(--c-mt); }
+.kv-al   { color: var(--c-al); }
+.kv-len  { color: #5b6470; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+body {
+  font: 17px/1.65 "Iowan Old Style", Georgia, "Times New Roman", serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 800px; margin: 0 auto; padding: 52px 22px 96px; }
+
+h1, h2, h3 { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); }
+h1 { font-size: 2.1rem; line-height: 1.12; letter-spacing: -0.02em; margin: 6px 0 14px; font-weight: 700; }
+h2 {
+  font-size: 1.35rem; line-height: 1.2; letter-spacing: -0.015em;
+  margin: 52px 0 14px; font-weight: 650;
+  display: flex; align-items: baseline; gap: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--line);
+}
+h2 .n {
+  font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--accent);
+  background: #eaf2ec; border: 1px solid #cfe3d5; padding: 2px 8px; border-radius: 4px;
+  flex-shrink: 0;
+}
+h3 { font-size: 1.05rem; margin: 24px 0 8px; font-weight: 650; }
+p { margin: 12px 0 14px; }
+ul { padding-left: 22px; } li { margin: 6px 0; }
+strong { font-weight: 650; }
+
+code { font-family: var(--mono); font-size: 0.87em; background: var(--code-bg); padding: 1.5px 6px; border-radius: 4px; color: #7a3a2f; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.6; }
+pre code { background: none; padding: 0; color: inherit; }
+pre .kw  { color: #7b3a73; }
+pre .fn  { color: #2d5d7b; }
+pre .com { color: #8b8475; font-style: italic; }
+pre .str { color: #4d7a4a; }
+pre .num { color: #a15a2a; }
+pre .lna { background: rgba(77,122,74,0.12); display: block; margin: 0 -16px; padding: 0 16px; }
+pre .lnd { background: rgba(177,72,59,0.12); display: block; margin: 0 -16px; padding: 0 16px; }
+
+.tldr {
+  background: #eaf2ec; border: 1px solid #cfe3d5; border-radius: 10px;
+  padding: 16px 20px; margin: 18px 0;
+}
+.tldr strong { color: var(--accent); }
+.note {
+  border-radius: 8px; padding: 13px 16px; margin: 18px 0;
+  border-left: 3px solid var(--accent); background: #f1f6f2;
+  font-size: 0.95em; color: var(--mid);
+}
+.note strong { color: var(--ink); }
+.note.warn { border-left-color: var(--c-rew); background: #fbeeec; }
+.note.good { border-left-color: var(--c-adv); background: #eef4ec; }
+.note p:first-child { margin-top: 0; } .note p:last-child { margin-bottom: 0; }
+.callout { background: #faf1de; border-left: 3px solid #b06a00; padding: 13px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 0.95em; color: var(--mid); }
+.callout strong { color: var(--ink); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin: 18px 0; }
+.eq { background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 16px; margin: 14px 0; overflow-x: auto; }
+.filepath { font-family: var(--mono); font-size: 11.5px; color: var(--dim); margin: 16px 0 4px; }
+
+/* notation glossary */
+.gloss { list-style: none; padding: 0; margin: 8px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+@media (max-width: 600px) { .gloss { grid-template-columns: 1fr; } }
+.gloss li { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.gloss li:nth-child(odd) { border-right: 1px solid var(--line); }
+.gloss .sym { font-family: var(--mono); font-weight: 700; font-size: 17px; min-width: 26px; text-align: center; flex-shrink: 0; }
+.gloss .def { font-size: 14px; color: var(--mid); line-height: 1.45; }
+.gloss .def strong { color: var(--ink); font-size: 14px; }
+
+/* label chips */
+.chip { display: inline-block; padding: 2px 8px; border-radius: 14px; font-family: var(--mono); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.chip.regress  { background: #fdecea; color: var(--regress); border: 1px solid #f5c6c3; }
+.chip.neutral  { background: #f0f1f2; color: var(--neutral); border: 1px solid #d5d7da; }
+.chip.progress { background: #eaf2ec; color: var(--progress); border: 1px solid #cfe3d5; }
+.chip.achieved { background: #f0eaf8; color: var(--achieved); border: 1px solid #d5c4ee; }
+
+/* comparison table */
+table.cmp { width: 100%; border-collapse: collapse; font-size: 14px; margin: 14px 0; }
+table.cmp th, table.cmp td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.cmp th { color: var(--dim); font-weight: 600; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 2px solid var(--line); }
+table.cmp td:first-child { font-weight: 600; color: var(--ink); width: 26%; font-size: 13.5px; }
+table.cmp tr:last-child td { border-bottom: none; }
+.ok  { color: var(--c-adv); font-weight: 700; }
+.no  { color: var(--c-rew); font-weight: 700; }
+.par { color: var(--c-disc); }
+
+/* worked example table */
+table.ex { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0 16px; }
+table.ex th, table.ex td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+table.ex th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); border-bottom: 2px solid var(--line); }
+table.ex .mono { font-family: var(--mono); font-size: 12.5px; }
+.vpos  { color: var(--c-adv); font-weight: 700; font-family: var(--mono); }
+.vneg  { color: var(--c-rew); font-weight: 700; font-family: var(--mono); }
+.vflat { color: var(--dim); font-family: var(--mono); }
+.vhi   { color: var(--c-adv); font-weight: 700; font-family: var(--mono); }
+.vmax  { color: var(--c-ret); font-weight: 700; font-family: var(--mono); }
+.vdamp { color: var(--c-disc); font-family: var(--mono); }
+
+/* anti-hack table */
+table.ah { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 12px 0; }
+table.ah th, table.ah td { padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.ah th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); border-bottom: 2px solid var(--line); }
+table.ah td:first-child { font-weight: 650; width: 34%; }
+table.ah tr:last-child td { border-bottom: none; }
+
+/* flow diagram */
+.flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0; font-family: var(--mono); font-size: 13px; }
+.flow-box { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); white-space: nowrap; }
+.flow-box.s { border-color: #cfe3d5; background: #eaf2ec; color: var(--accent); font-weight: 600; }
+.flow-box.t { border-color: #d5c4ee; background: #f0eaf8; color: var(--achieved); font-weight: 600; }
+.flow-box.op { border-color: #d5d7da; background: #f6f6f6; color: var(--mid); }
+.flow-arr { color: var(--dim); font-size: 16px; }
+
+/* broadcast animation */
+@keyframes bpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.broadcast-row { display: flex; gap: 4px; align-items: center; margin: 8px 0; }
+.broadcast-row .tok {
+  flex: 1; height: 28px; border-radius: 4px; background: var(--c-adv);
+  opacity: 0.8;
+  animation: bpulse 2s ease-in-out infinite;
+}
+.broadcast-row .tok:nth-child(2) { animation-delay: 0.15s; }
+.broadcast-row .tok:nth-child(3) { animation-delay: 0.30s; }
+.broadcast-row .tok:nth-child(4) { animation-delay: 0.45s; }
+.broadcast-row .tok:nth-child(5) { animation-delay: 0.60s; }
+
+/* alpha-sweep bars */
+.acol { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.aval { font-family: var(--mono); font-size: 10px; color: #2f6f4f; margin-bottom: 3px; }
+.abar { width: 100%; background: var(--c-adv); opacity: .72; border-radius: 2px 2px 0 0; height: 67px; transition: height 0.18s ease-out; }
+
+/* self-judge weight display */
+.sj-turns { display: flex; gap: 6px; margin: 12px 0; flex-wrap: wrap; }
+.sj-turn { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel); min-width: 100px; flex: 1; }
+.sj-turn .t-num  { font-family: var(--mono); font-size: 10.5px; color: var(--dim); margin-bottom: 4px; }
+.sj-turn .t-adv  { font-family: var(--mono); font-size: 1.1rem; font-weight: 700; }
+.sj-turn .t-info { font-size: 12px; color: var(--mid); margin-top: 2px; }
+
+/* ─── animated bar chart ─────────────────────────────────── */
+.chart-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 16px 14px; margin: 22px 0; }
+.chart-title { font-family: var(--mono); font-size: 11.5px; color: var(--mid); margin-bottom: 14px; }
+.chart-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.cb { font-family: var(--mono); font-size: 11.5px; padding: 5px 14px; border-radius: 20px; border: 1px solid var(--line); background: transparent; cursor: pointer; color: var(--mid); transition: all 0.18s; }
+.cb.on { border-color: var(--accent); background: #eaf2ec; color: var(--accent); font-weight: 700; }
+.cb:hover:not(.on) { border-color: var(--mid); color: var(--ink); }
+
+.chart-body { display: flex; gap: 0; }
+.chart-yaxis {
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding-bottom: 44px; /* align with baseline */
+  font-family: var(--mono); font-size: 11px; color: var(--dim);
+  width: 38px; flex-shrink: 0; align-items: flex-end;
+}
+.chart-cols {
+  flex: 1; display: flex; position: relative;
+  border-bottom: 1px solid var(--line); /* baseline */
+}
+.chart-cols::after { /* zero line */
+  content: ''; position: absolute; left: 0; right: 0;
+  top: 130px; /* half of 260px total = baseline */
+  height: 1px; background: var(--mid);
+  pointer-events: none; z-index: 1;
+}
+.chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; }
+.above { height: 130px; display: flex; align-items: flex-end; justify-content: center; width: 100%; padding: 0 6px; }
+.below { height: 130px; display: flex; align-items: flex-start; justify-content: center; width: 100%; padding: 0 6px; }
+.bpos { width: 100%; max-width: 52px; height: 0; border-radius: 3px 3px 0 0; transition: height 0.42s cubic-bezier(0.4,0,0.2,1); background: var(--c-adv); }
+.bneg { width: 100%; max-width: 52px; height: 0; border-radius: 0 0 3px 3px; transition: height 0.42s cubic-bezier(0.4,0,0.2,1); background: var(--c-rew); }
+.col-foot { padding-top: 8px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 44px; }
+.col-foot .turn-n  { font-family: var(--mono); font-size: 10px; color: var(--dim); }
+.val-lbl { font-family: var(--mono); font-size: 11.5px; font-weight: 700; height: 16px; transition: color 0.3s; }
+
+hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
+footer { margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--dim); font-family: var(--mono); font-size: 11.5px; line-height: 1.8; }
+
+/* ─── table of contents ──────────────────────────────────── */
+html { scroll-behavior: smooth; }
+h2 { scroll-margin-top: 16px; }
+.toc-toggle {
+  position: fixed; top: 16px; left: 16px; z-index: 50;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+  padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--mid); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05); transition: color 0.15s, border-color 0.15s;
+}
+.toc-toggle:hover { color: var(--ink); border-color: var(--mid); }
+.toc {
+  position: fixed; top: 54px; left: 16px; width: 244px;
+  max-height: calc(100vh - 76px); overflow-y: auto; z-index: 49;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 10px; box-shadow: 0 4px 18px rgba(0,0,0,0.07);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.toc[hidden] { display: none; }
+.toc .toc-head { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); padding: 2px 8px 8px; }
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc li { margin: 1px 0; }
+.toc a { display: flex; gap: 9px; align-items: baseline; text-decoration: none; color: var(--mid); padding: 5px 8px; border-radius: 6px; font-size: 13px; line-height: 1.3; }
+.toc a:hover { background: var(--code-bg); color: var(--ink); }
+.toc a.active { background: #eaf2ec; color: var(--accent); font-weight: 650; }
+.toc a .num { font-family: var(--mono); font-size: 10px; color: var(--accent); flex-shrink: 0; min-width: 16px; }
+@media (max-width: 1180px) {
+  /* on narrow screens, hidden by default; toggle reveals it as an overlay */
+  .toc { box-shadow: 0 6px 28px rgba(0,0,0,0.16); }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Table of contents (toggleable, shown by default) ─────── -->
+<button class="toc-toggle" id="tocToggle" aria-expanded="true" aria-controls="toc" onclick="toggleToc()">☰ Contents</button>
+<nav class="toc" id="toc" aria-label="Table of contents">
+  <div class="toc-head">Contents</div>
+  <ol>
+    <li><a href="#s01"><span class="num">01</span>The advantage is the per-token weight</a></li>
+    <li><a href="#s02"><span class="num">02</span>What prime-rl does today</a></li>
+    <li><a href="#s03"><span class="num">03</span>Two approaches — at a glance</a></li>
+    <li><a href="#s04"><span class="num">04</span>A: Vanilla GRPO</a></li>
+    <li><a href="#s05"><span class="num">05</span>B: Per-turn self-judge</a></li>
+    <li><a href="#s06"><span class="num">06</span>Interactive comparison</a></li>
+    <li><a href="#s07"><span class="num">07</span>When to use which approach</a></li>
+  </ol>
+</nav>
+
+<div class="wrap">
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<header>
+  <div style="font-family:var(--mono);font-size:11px;letter-spacing:0.18em;color:var(--accent);text-transform:uppercase;margin-bottom:10px">explainer · reinforcement learning · prime-rl</div>
+  <h1>Per-step rewards: two ways to weight a token's contribution</h1>
+  <p style="font-family:var(--mono);font-size:12px;color:var(--dim);margin:0 0 20px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center">
+    <span style="background:#eaf2ec;color:var(--accent);border:1px solid #cfe3d5;padding:2px 8px;border-radius:4px;font-weight:600">GRPO</span>
+    <span style="background:#eaf2ec;color:var(--accent);border:1px solid #cfe3d5;padding:2px 8px;border-radius:4px;font-weight:600">per-turn self-judge</span>
+    <span>· 2026-06-01</span>
+  </p>
+
+  <div class="tldr">
+    <p style="margin:0 0 10px"><strong>Two approaches, one underlying mechanism.</strong> Policy-gradient RL weights each token by an <em>advantage</em> value — that multiplier is the answer to "weight a token's contribution to the update." The two approaches differ only in where those values come from.</p>
+    <p style="margin:0">Today prime-rl broadcasts <strong>one scalar to every token</strong> (Approach A). Per-turn self-judge (B) has the policy grade its own progress every turn — those grades <em>reshape</em> the scalar advantage multiplicatively while preserving total gradient mass.</p>
+  </div>
+
+  <!-- Notation glossary -->
+  <div class="panel" style="margin-top:20px">
+    <h3 style="margin-top:0;margin-bottom:10px">Variable reference (colors match equations below)</h3>
+    <ul class="gloss">
+      <li><span class="sym" style="color:var(--c-rew)">r</span><span class="def"><strong>reward</strong> — scalar signal. $\rew_t$ is the reward at step $t$; today prime-rl emits one $\rew$ per rollout.</span></li>
+      <li><span class="sym" style="color:var(--c-adv)">A</span><span class="def"><strong>advantage</strong> — the per-token weight multiplied into the gradient. $\adv_t$ is the weight on step $t$'s tokens.</span></li>
+      <li><span class="sym" style="color:var(--c-ret)">G</span><span class="def"><strong>return / reward-to-go</strong> — discounted sum of step $t$'s reward and all future rewards: $\ret_t = \sum_{t' \ge t} \disc^{t'-t} \rew_{t'}$.</span></li>
+      <li><span class="sym" style="color:var(--c-val)">V</span><span class="def"><strong>baseline / value</strong> — reference subtracted from $\ret_t$ to reduce variance. GRPO uses the group mean.</span></li>
+      <li><span class="sym" style="color:var(--c-disc)">γ</span><span class="def"><strong>discount</strong> — $0 \le \disc \le 1$; how much future rewards decay.</span></li>
+      <li><span class="sym" style="color:var(--c-pol)">π</span><span class="def"><strong>policy</strong> — the model $\pol_\theta$; $\pol(a_t | s_t)$ is the probability of token $a_t$.</span></li>
+      <li><span class="sym" style="color:var(--c-vt)">v</span><span class="def"><strong>self-judge label value</strong> — $\vt_t \in \{-1, 0, +1, +2\}$ for REGRESS/NEUTRAL/PROGRESS/ACHIEVED.</span></li>
+      <li><span class="sym" style="color:var(--c-wt)">w</span><span class="def"><strong>raw per-turn weight</strong> — sign-aware scaling factor before normalization.</span></li>
+      <li><span class="sym" style="color:var(--c-mt)">m</span><span class="def"><strong>normalized multiplier</strong> — $\mt_t$ after token-mass renormalization.</span></li>
+      <li><span class="sym" style="color:var(--c-al)">α</span><span class="def"><strong>self-judge strength</strong> — $\al = 0$ collapses to vanilla GRPO; $\al = 1$ is full weighting.</span></li>
+    </ul>
+  </div>
+</header>
+
+
+<!-- ── §01: PG foundation ───────────────────────────────────── -->
+<section>
+  <h2 id="s01"><span class="n">01</span>The advantage is the per-token weight</h2>
+  <p>The policy-gradient theorem is a sum over steps, where each step's log-prob gradient is multiplied by a scalar weight:</p>
+
+  <div class="eq">
+    $$\nabla J(\theta) = \mathbb{E}\!\left[\;\sum_t \underbrace{\adv_t}_{\text{weight}} \cdot \nabla \log \pol_\theta(a_t \mid s_t)\;\right], \qquad \adv_t = \ret_t - \val(s_t), \qquad \ret_t = \sum_{t' \ge t} \disc^{\,t'-t}\,\rew_{t'}$$
+  </div>
+
+  <p>$\adv_t$ is exactly the "multiply the token's contribution" mechanism the question asks about. Two things the formula immediately settles:</p>
+  <ul>
+    <li><strong>Multiply, not bias.</strong> $\adv_t$ <em>scales</em> $\nabla\log\pol$. An additive bias on the loss has no per-token gradient (constants differentiate to zero); biasing logits reshapes the optimal policy. Multiplicative weighting is the unbiased, principled form — and it is what's already wired up in <code>loss.py:151</code>.</li>
+    <li><strong>Future credit, not immediate reward.</strong> The return $\ret_t$ contains $\rew_t, \rew_{t+1}, \ldots$ but <em>not</em> past rewards. A reward at step 5 should credit steps 1–5, not steps 6–10. Weighting a token by the bare immediate $\rew_t$ is wrong — the correct weight is the return-to-go minus a baseline.</li>
+  </ul>
+
+  <p>In prime-rl the per-token loss already uses a <code>[seq]</code>-shaped advantage tensor element-wise:</p>
+  <div class="filepath">src/prime_rl/trainer/rl/loss.py:151</div>
+  <pre>pg_loss = keep_mask * advantages * importance_ratio
+<span class="com">#         [seq]     × [seq]      × [seq]  — all token-shaped</span></pre>
+  <p>Nothing in the loss assumes <code>advantages</code> is uniform. The only reason every token gets the same value by default is one upstream branch: <code>batch.py:62</code>.</p>
+
+  <h3>Complete worked example: rewards → returns → advantage</h3>
+  <p>Three steps turn raw rewards into the per-token weight. Every number here flows directly into Approach A (§04) and Approach B (§05).</p>
+
+  <p><strong>Step 1 — Return-to-go $\ret_t$.</strong> Suppose only the final turn earns reward (a typical sparse task), $\rew = [0,0,0,0,1]$, with discount $\disc = 0.9$. Reading the recursion backward, every earlier turn inherits <em>discounted</em> credit for the future success:</p>
+
+  <div class="eq">$$\ret_t = \rew_t + \disc\,\ret_{t+1} \;\Rightarrow\; \ret_5 = 1.000,\;\; \ret_4 = 0.900,\;\; \ret_3 = 0.810,\;\; \ret_2 = 0.729,\;\; \ret_1 = 0.656$$</div>
+
+  <!-- return-to-go bars: height ∝ G_t -->
+  <div style="display:flex;gap:10px;align-items:flex-end;height:84px;margin:14px 0 4px;padding:0 4px">
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--c-ret);margin-bottom:3px">0.656</div>
+      <div style="width:100%;max-width:46px;height:46px;background:var(--c-ret);opacity:.45;border-radius:3px 3px 0 0"></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--c-ret);margin-bottom:3px">0.729</div>
+      <div style="width:100%;max-width:46px;height:51px;background:var(--c-ret);opacity:.55;border-radius:3px 3px 0 0"></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--c-ret);margin-bottom:3px">0.810</div>
+      <div style="width:100%;max-width:46px;height:57px;background:var(--c-ret);opacity:.65;border-radius:3px 3px 0 0"></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--c-ret);margin-bottom:3px">0.900</div>
+      <div style="width:100%;max-width:46px;height:63px;background:var(--c-ret);opacity:.78;border-radius:3px 3px 0 0"></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--c-ret);margin-bottom:3px">1.000</div>
+      <div style="width:100%;max-width:46px;height:70px;background:var(--c-ret);opacity:.92;border-radius:3px 3px 0 0"></div>
+    </div>
+  </div>
+  <div style="display:flex;gap:10px;padding:0 4px">
+    <div style="flex:1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--dim)">Turn 1</div>
+    <div style="flex:1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--dim)">Turn 2</div>
+    <div style="flex:1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--dim)">Turn 3</div>
+    <div style="flex:1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--dim)">Turn 4</div>
+    <div style="flex:1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--dim)">Turn 5 ✓</div>
+  </div>
+  <p style="font-size:13px;color:var(--mid);margin-top:10px">Turn 1 still receives <span class="mono" style="color:var(--c-ret)">0.656</span> of credit for <em>enabling</em> a win four turns later. This is why the weight is the return $\ret_t$ — never the bare immediate reward $\rew_t$, which would be $0$ for turns 1–4 and starve the very setup steps that caused the success.</p>
+
+  <p><strong>Step 2 — Baseline $\val$ = the GRPO group mean.</strong> GRPO has no learned critic, so the baseline is simply the mean return across the $K$ rollouts in the group. Take $K=4$ rollouts of the same VLC task, each with a single outcome reward ($\disc=1$, so $\ret_t = \rew$ for every turn):</p>
+
+  <table class="ex">
+    <thead><tr><th>Rollout</th><th>Outcome $\rew$</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">#1 (this one)</td><td class="mono">0.75</td><td style="font-size:12.5px;color:var(--mid)">task essentially solved</td></tr>
+      <tr><td class="mono">#2</td><td class="mono">0.00</td><td style="font-size:12.5px;color:var(--mid)">failed outright</td></tr>
+      <tr><td class="mono">#3</td><td class="mono">0.45</td><td style="font-size:12.5px;color:var(--mid)">partial</td></tr>
+      <tr><td class="mono">#4</td><td class="mono">0.40</td><td style="font-size:12.5px;color:var(--mid)">partial</td></tr>
+      <tr><td class="mono"><strong>$\val$ = mean</strong></td><td class="mono"><strong>0.40</strong></td><td style="font-size:12.5px;color:var(--mid)">the GRPO baseline — no critic needed</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>Step 3 — Advantage $\adv_t = \ret_t - \val$.</strong> With $\disc=1$ and a terminal-only reward, every turn in a rollout shares the same return, so it shares the same advantage:</p>
+
+  <table class="ex">
+    <thead><tr><th>Rollout</th><th>$\ret_t$ (all turns)</th><th>$\adv_t = \ret_t - 0.40$</th><th>Broadcast to</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">#1</td><td class="mono">0.75</td><td><span class="vpos">+0.35</span></td><td style="font-size:12.5px;color:var(--mid)">all 200 of its tokens</td></tr>
+      <tr><td class="mono">#2</td><td class="mono">0.00</td><td><span class="vneg">−0.40</span></td><td style="font-size:12.5px;color:var(--mid)">all its tokens</td></tr>
+      <tr><td class="mono">#3</td><td class="mono">0.45</td><td><span class="vpos">+0.05</span></td><td style="font-size:12.5px;color:var(--mid)">all its tokens</td></tr>
+      <tr><td class="mono">#4</td><td class="mono">0.40</td><td><span class="vflat">0.00</span></td><td style="font-size:12.5px;color:var(--mid)">no gradient</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>This is why GRPO broadcasts.</strong> The flat $\adv_t$ in the last column is exactly the scalar §02 copies onto every token. Rollout&nbsp;#1's <span class="mono" style="color:var(--c-adv)">+0.35</span> and #2's <span class="mono" style="color:var(--c-rew)">−0.40</span> are the precise inputs the self-judge reshapes in §05. The <em>only</em> way to get a non-flat $\adv_t$ <em>within</em> a rollout under prime-rl is redistribution of the scalar (Approach B).
+  </div>
+
+  <div class="note">
+    <strong>prime-rl has no $\disc$ knob.</strong> The advantage code (<code>orchestrator/advantage.py:70</code>) is pure GRPO over a single scalar <code>reward</code> per rollout — no return-to-go, no discount factor anywhere in the tree. prime-rl <em>is</em> the $\disc=1$, terminal-only case above; with exactly one reward per rollout, discounting is moot regardless of $\disc$. The $\disc$ in Step 1 is general policy-gradient theory, not a parameter you can set today.
+  </div>
+</section>
+
+
+<!-- ── §02: Prime-rl today ─────────────────────────────────── -->
+<section>
+  <h2 id="s02"><span class="n">02</span>What prime-rl does today — scalar broadcast</h2>
+
+  <div class="flow">
+    <div class="flow-box s">R (one scalar/rollout)</div>
+    <div class="flow-arr">→</div>
+    <div class="flow-box op">GRPO baseline: $\adv = \rew - \bar{\rew}_{\text{group}}$</div>
+    <div class="flow-arr">→</div>
+    <div class="flow-box op">broadcast × seq_len</div>
+    <div class="flow-arr">→</div>
+    <div class="flow-box t">all tokens ← same A</div>
+  </div>
+
+  <div class="filepath">src/prime_rl/transport/types.py:37,41 — scalar plus optional per-step override</div>
+  <pre>    advantage: <span class="kw">float</span> | <span class="kw">None</span> = <span class="kw">None</span>              <span class="com"># one scalar per rollout</span>
+    completion_advantages: <span class="kw">list</span>[<span class="kw">float</span>] | <span class="kw">None</span> = <span class="kw">None</span>  <span class="com"># per-token vector; overrides the scalar when set</span></pre>
+
+  <div class="filepath">src/prime_rl/trainer/batch.py:60 — broadcast unless a per-token vector is supplied</div>
+  <pre>completion_advantages = training_example.completion_advantages
+<span class="kw">if</span> completion_advantages <span class="kw">is</span> <span class="kw">None</span>:
+    advantages = [training_example.advantage] * <span class="fn">len</span>(input_ids)  <span class="com"># scalar → every token</span>
+<span class="kw">else</span>:
+    advantages = [training_example.advantage] * <span class="fn">len</span>(prompt_ids) + <span class="fn">list</span>(completion_advantages)</pre>
+
+  <p>The per-step hook already exists: when <code>completion_advantages</code> is <code>None</code> (the default) every completion token gets the broadcast scalar; when a rollout supplies the <code>[seq]</code> vector — as the self-judge does (§05) — it overrides per token. The loss needs <strong>no change</strong> either way: it already multiplies a <code>[seq]</code> tensor element-wise.</p>
+
+  <p style="margin-bottom:4px;font-size:14px;color:var(--mid)">What this looks like for 5 turns — all tokens pulse at the same intensity:</p>
+  <div class="broadcast-row">
+    <div class="tok" title="Turn 1"></div>
+    <div class="tok" title="Turn 2"></div>
+    <div class="tok" title="Turn 3"></div>
+    <div class="tok" title="Turn 4"></div>
+    <div class="tok" title="Turn 5"></div>
+  </div>
+  <p style="font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:4px">5 turns, all carrying identical advantage A — temporal structure is invisible to the optimizer.</p>
+</section>
+
+
+<!-- ── §03: Comparison table ──────────────────────────────── -->
+<section>
+  <h2 id="s03"><span class="n">03</span>Two approaches — at a glance</h2>
+  <table class="cmp">
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>A: Vanilla GRPO</th>
+        <th>B: Per-turn self-judge</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Per-token weight formula</td>
+        <td>$\adv$ broadcast to all tokens</td>
+        <td>$\adv \cdot \mt_t$ per step span</td>
+      </tr>
+      <tr>
+        <td>Source of step signal</td>
+        <td class="par">None — single outcome</td>
+        <td class="ok">Policy's own label per turn</td>
+      </tr>
+      <tr>
+        <td>Causal credit (future rewards credit earlier steps)</td>
+        <td class="no">No — flat</td>
+        <td class="par">Partial — redistributes A, doesn't recompute it</td>
+      </tr>
+      <tr>
+        <td>Requires critic / value head</td>
+        <td class="ok">No</td>
+        <td class="ok">No</td>
+      </tr>
+      <tr>
+        <td>Requires external verifier</td>
+        <td class="ok">No</td>
+        <td class="ok">No</td>
+      </tr>
+      <tr>
+        <td>Total gradient mass preserved</td>
+        <td class="ok">Yes — $\adv \times L$</td>
+        <td class="ok">Yes — renorm enforces $\adv \times L$</td>
+      </tr>
+      <tr>
+        <td>Gaming / false signal risk</td>
+        <td class="ok">None</td>
+        <td class="par">Self-grade inflation (4 anti-hack mitigations)</td>
+      </tr>
+      <tr>
+        <td>Grad when all rollouts fail (reward=0)</td>
+        <td class="no">Zero — training stalls</td>
+        <td class="ok">Non-zero if labels vary within group</td>
+      </tr>
+      <tr>
+        <td>Current prime-rl</td>
+        <td class="ok">Native (default)</td>
+        <td class="ok">Native (opt-in <code>[orchestrator.self_judge]</code>)</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+
+<!-- ── §04: Approach A ─────────────────────────────────────── -->
+<section>
+  <h2 id="s04"><span class="n">04</span>Approach A: Vanilla GRPO</h2>
+
+  <p>One scalar advantage per rollout, computed by GRPO group-normalization:</p>
+
+  <div class="eq">
+    $$\adv_i = \rew_i - \underbrace{\frac{1}{K}\sum_{j=1}^{K} \rew_j}_{\text{group mean (baseline)}} \qquad K = \text{rollouts in group}$$
+  </div>
+  <p class="filepath" style="margin-top:0">src/prime_rl/orchestrator/advantage.py:70 — <code>rewards - rewards.mean()</code></p>
+
+  <p>That scalar is then broadcast to every assistant token. All turns in a trajectory receive identical gradient scaling. <strong>No temporal structure survives.</strong></p>
+
+  <div class="callout">
+    <strong>The stall mode.</strong> If all $K$ rollouts on a hard task fail: rewards $= [0,\ldots,0]$, group mean $= 0$, advantages $= [0,\ldots,0]$, gradient $= 0$. The model learns nothing that step. This is the primary motivation for Approach B.
+  </div>
+
+  <h3>Worked example</h3>
+  <p>VLC task, 5 turns, $K=8$ rollouts. This rollout: $\rew = 0.6$. Group mean: $\bar{\rew} = 0.25$.</p>
+  <p style="font-family:var(--mono);font-size:14px">$\adv = 0.6 - 0.25 = +0.35$</p>
+  <table class="ex">
+    <thead><tr><th>Turn</th><th>Action</th><th>Label</th><th>Approach A: $A^{\text{tok}}_t$</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">1</td><td>Opens VLC</td><td><span class="chip neutral">NEUTRAL</span></td><td><span class="vflat">+0.350</span></td><td style="font-size:12.5px;color:var(--dim)">reinforced</td></tr>
+      <tr><td class="mono">2</td><td>Clicks wrong menu</td><td><span class="chip regress">REGRESS</span></td><td><span class="vflat">+0.350</span></td><td style="font-size:12.5px;color:var(--c-rew)">also reinforced ← wrong!</td></tr>
+      <tr><td class="mono">3</td><td>Tools &gt; Preferences</td><td><span class="chip progress">PROGRESS</span></td><td><span class="vflat">+0.350</span></td><td style="font-size:12.5px;color:var(--dim)">reinforced</td></tr>
+      <tr><td class="mono">4</td><td>Input/Codecs tab</td><td><span class="chip progress">PROGRESS</span></td><td><span class="vflat">+0.350</span></td><td style="font-size:12.5px;color:var(--dim)">reinforced</td></tr>
+      <tr><td class="mono">5</td><td>Changes codec to H.264</td><td><span class="chip achieved">ACHIEVED</span></td><td><span class="vflat">+0.350</span></td><td style="font-size:12.5px;color:var(--dim)">reinforced</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13.5px;color:var(--mid)">The regressing turn-2 is reinforced as strongly as the successful turn-5. The gradient cannot tell them apart.</p>
+</section>
+
+
+<!-- ── §05: Approach B — self-judge ───────────────────────── -->
+<section>
+  <h2 id="s05"><span class="n">05</span>Approach B: Per-turn self-judge</h2>
+  <p>Instead of an external verifier, the policy grades its <em>own</em> action — <strong>after the environment has responded</strong>, so the action's outcome is visible. Each grade is a discrete progress label, and the label sequence reshapes the scalar GRPO advantage multiplicatively — no new reward signal, only redistribution.</p>
+
+  <div class="note good">
+    <strong>This is implemented in-tree.</strong> The wrapper env <code>environments/self_judge_wrapper/self_judge_wrapper.py</code> emits the per-turn labels into <code>state["_progress_labels"]</code>; the orchestrator reshapes advantages in <code>src/prime_rl/orchestrator/self_judge.py</code> (<code>attach_self_judge_advantages_to_rollout</code>, line 74). It is enabled per-run by an <code>[orchestrator.self_judge]</code> config block (<code>SelfJudgeConfig</code>, <code>packages/prime-rl-configs/.../configs/orchestrator.py:445</code>); omit the block for plain scalar GRPO.
+  </div>
+
+  <h3>The label vocabulary</h3>
+  <p class="filepath" style="margin-bottom:8px">src/prime_rl/orchestrator/self_judge.py:37 — <code>LABEL_VALUE</code>: REGRESS −1, NEUTRAL 0, PROGRESS +1, ACHIEVED +2</p>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">
+    <div style="border:1px solid #f5c6c3;background:#fdecea;border-radius:8px;padding:10px 14px;min-width:110px">
+      <div style="font-family:var(--mono);font-weight:700;color:var(--regress)">REGRESS</div>
+      <div style="font-family:var(--mono);font-weight:700;color:var(--regress);font-size:1.1rem">$v_t = -1$</div>
+      <div style="font-size:12.5px;color:var(--mid);margin-top:2px">moved away from goal</div>
+    </div>
+    <div style="border:1px solid #d5d7da;background:#f0f1f2;border-radius:8px;padding:10px 14px;min-width:110px">
+      <div style="font-family:var(--mono);font-weight:700;color:var(--neutral)">NEUTRAL</div>
+      <div style="font-family:var(--mono);font-weight:700;color:var(--neutral);font-size:1.1rem">$v_t = 0$</div>
+      <div style="font-size:12.5px;color:var(--mid);margin-top:2px">no change / first turn</div>
+    </div>
+    <div style="border:1px solid #cfe3d5;background:#eaf2ec;border-radius:8px;padding:10px 14px;min-width:110px">
+      <div style="font-family:var(--mono);font-weight:700;color:var(--progress)">PROGRESS</div>
+      <div style="font-family:var(--mono);font-weight:700;color:var(--progress);font-size:1.1rem">$v_t = +1$</div>
+      <div style="font-size:12.5px;color:var(--mid);margin-top:2px">moved toward goal</div>
+    </div>
+    <div style="border:1px solid #d5c4ee;background:#f0eaf8;border-radius:8px;padding:10px 14px;min-width:110px">
+      <div style="font-family:var(--mono);font-weight:700;color:var(--achieved)">ACHIEVED</div>
+      <div style="font-family:var(--mono);font-weight:700;color:var(--achieved);font-size:1.1rem">$v_t = +2$</div>
+      <div style="font-size:12.5px;color:var(--mid);margin-top:2px">reached goal state</div>
+    </div>
+  </div>
+
+  <h3>How labels are generated — the judge sees the outcome</h3>
+  <p class="filepath" style="margin-bottom:8px">environments/self_judge_wrapper/self_judge_wrapper.py — the wrapper patches <code>env_response</code>; after the env returns observation $o_{t+1}$ it fires one short judge completion (<code>_generate_progress_label</code>), parsed to one label (<code>_PROGRESS_LABEL_RE</code>)</p>
+  <p>The judge runs <strong>after the environment has executed the action</strong>, so it grades action $a_t$ with its consequence $o_{t+1}$ in view — a tool result, an error string, a new screenshot. The judge prompt is the conversation up to and including $a_t$ (its prefix is already cached from the action pass) plus one user message carrying the observation and the grading question:</p>
+  <div class="eq" style="border-left-color:var(--c-vt)">$$\text{judge input} \;=\; \big[\,s_t,\; a_t\,\big] \;+\; \texttt{UserMessage}\big(\,o_{t+1} \;+\; \text{“grade your last action”}\,\big) \;\longrightarrow\; \vt_t$$</div>
+
+  <!-- judge-after-observation animation -->
+  <div class="panel" id="judge-wrap" style="padding:16px 18px;margin:16px 0">
+    <div style="font-family:var(--mono);font-size:11px;color:var(--mid);margin-bottom:14px">Judge fires after the env responds · the observation drives the label &nbsp;<button id="jBtn" onclick="jToggle()" style="font-family:var(--mono);font-size:10.5px;padding:3px 10px;border-radius:12px;border:1px solid var(--line);background:var(--code-bg);color:var(--mid);cursor:pointer">⏸ pause</button> <span id="jTurn" style="font-family:var(--mono);font-size:10.5px;color:var(--dim)">turn 1/5</span></div>
+
+    <!-- sequential timeline -->
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div id="j-prefix" style="background:#eaf2ec;border:1px solid #cfe3d5;border-radius:7px;padding:7px 12px;font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600;transition:box-shadow 0.3s">prefix: state s<sub>t</sub> &nbsp;<span style="font-weight:400;color:var(--mid)">(cached — computed once)</span></div>
+      <div style="text-align:center;font-family:var(--mono);font-size:15px;color:var(--dim)">↓</div>
+      <div id="j-action" style="border:1px solid var(--line);border-radius:7px;padding:8px 12px;opacity:0;transition:opacity 0.4s">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:0.06em;text-transform:uppercase">agent · action $a_t$</span>
+        <div style="font-family:var(--mono);font-size:12px;color:var(--ink);margin-top:2px" id="j-action-val">execute_tool(salesforce.update_contact, …)</div>
+      </div>
+      <div style="text-align:center;font-family:var(--mono);font-size:11px;color:var(--dim)">↓ &nbsp;env executes</div>
+      <div id="j-obs" style="border:1px solid var(--line);border-radius:7px;padding:8px 12px;opacity:0;transition:opacity 0.4s,border-color 0.3s,background 0.3s">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:0.06em;text-transform:uppercase">env · observation $o_{t+1}$ &nbsp;<span style="color:var(--c-vt);text-transform:none;letter-spacing:0">← the new signal the judge now sees</span></span>
+        <div style="font-family:var(--mono);font-size:12px;margin-top:2px" id="j-obs-val">{"success": true, "updated": "mobilePhone"}</div>
+      </div>
+      <div style="text-align:center;font-family:var(--mono);font-size:11px;color:var(--dim)">↓ &nbsp;judge completion grades $a_t$ given $o_{t+1}$</div>
+      <div id="j-label" style="border:1px solid #d5c4ee;background:#f0eaf8;border-radius:7px;padding:8px 12px;opacity:0;transition:opacity 0.4s;display:flex;align-items:center;gap:10px">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:0.06em;text-transform:uppercase">judge → label $v_t$</span>
+        <span style="font-family:var(--mono);font-size:14px;font-weight:700" id="j-label-val">PROGRESS</span>
+        <span style="color:var(--mid);font-size:12px">→ orchestrator weight $\mt_t$ (side-channel, never trained)</span>
+      </div>
+    </div>
+  </div>
+
+  <p><strong>Why the observation matters.</strong> Two turns can issue an almost-identical action yet have opposite outcomes. Without $o_{t+1}$ the judge sees only the action text and cannot tell them apart; with it the grade is grounded in what actually happened. On the AutomationBench "update a contact" task:</p>
+  <table class="ex">
+    <thead><tr><th>Action $a_t$</th><th>Observation $o_{t+1}$</th><th>Label (sees $o_{t+1}$)</th><th>Label (action only — old design)</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">update_contact(phone=…)</td><td class="mono" style="color:var(--c-rew)">Error: field 'phone' invalid</td><td><span class="chip regress">REGRESS</span></td><td><span class="chip progress">PROGRESS?</span> <span style="font-size:11px;color:var(--mid)">looks like a sensible update</span></td></tr>
+      <tr><td class="mono">update_contact(mobilePhone=…)</td><td class="mono" style="color:var(--progress)">success: updated mobilePhone</td><td><span class="chip progress">PROGRESS</span></td><td><span class="chip progress">PROGRESS?</span> <span style="font-size:11px;color:var(--mid)">indistinguishable from the error case</span></td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--mid)">Same verb, opposite results. The observation is exactly the signal that separates a failed write from a successful one — so the judge must see it before grading.</p>
+
+  <p>Key properties of this design:</p>
+  <ul>
+    <li><strong>Label is a pure side-channel.</strong> The judge completion is never recorded as a trajectory step and never receives gradient, so there are no format constraints and no parsing fragility — it only ever <em>reshapes</em> the action tokens' advantages.</li>
+    <li><strong>Outcome-grounded.</strong> Because the judge fires from <code>env_response</code> (after the action is executed), it grades $a_t$ with its result $o_{t+1}$ in context — not by guessing from the action text alone.</li>
+    <li><strong>Prefix reuse.</strong> The judge prompt extends the same conversation prefix that produced $a_t$, so the expensive attention over history is cached; the judge adds only the short observation+question and its one-word answer.</li>
+    <li><strong>No format engineering needed.</strong> Earlier in-band approaches required a mandatory <code>PLAN:</code> line placed outside <code>&lt;think&gt;</code> with 95–100% adherence monitoring. A separate judge completion eliminates all of that.</li>
+  </ul>
+
+  <div class="flow">
+    <div class="flow-box s">state $s_t$</div>
+    <div class="flow-arr">→</div>
+    <div class="flow-box op">action $a_t$ → env</div>
+    <div class="flow-arr">→</div>
+    <div class="flow-box op">observation $o_{t+1}$</div>
+    <div class="flow-arr">→</div>
+    <div class="flow-box t">judge → label $v_t$ → weight $\mt_t$</div>
+  </div>
+
+  <h3>The weighting math</h3>
+  <p class="filepath" style="margin-bottom:8px">src/prime_rl/orchestrator/self_judge.py:159 — <code>_compute_multipliers</code> (Steps 1–2); per-token write-back at <code>self_judge.py:127</code> (Step 3)</p>
+  <p><strong>Step 1 — raw per-turn weight.</strong> Sign-aware: in a successful rollout ($\adv > 0$), good labels amplify; in a failed one ($\adv < 0$), bad labels take more blame.</p>
+  <div class="eq">$$\wt_t \;=\; \max\!\big(\varepsilon,\; 1 \;+\; \al \cdot \vt_t \cdot \operatorname{sign}(\adv)\big), \qquad \varepsilon = 0.05$$</div>
+  <p style="font-size:13px;color:var(--mid);margin-top:-6px">The floor $\varepsilon$ (<code>WEIGHT_FLOOR</code>, <code>self_judge.py:50</code>) keeps every weight positive so a single adverse label can't flip its own turn's advantage sign — a no-op at $\al \le 0.5$, but a guard at higher $\al$.</p>
+
+  <p><strong>Step 2 — token-mass renormalization.</strong> Redistribution only — the total advantage mass is conserved regardless of labels.</p>
+  <div class="eq">$$\mt_t \;=\; \wt_t \;\cdot\; \frac{L}{\displaystyle\sum_s \wt_s \,\len_s} \qquad L = \sum_s \len_s = \text{total tokens}, \quad \len_s = \text{tokens in step }s$$</div>
+
+  <p><strong>Step 3 — per-token advantage.</strong></p>
+  <div class="eq">$$A^{\text{tok}}_t \;=\; \adv \;\cdot\; \mt_t$$</div>
+
+  <p>Verification (mass conservation): $\sum_t A^{\text{tok}}_t \cdot \len_t = \adv \cdot \sum_t \mt_t \len_t = \adv \cdot L$. ✓ Identical to scalar GRPO when all labels are uniform ($\wt_t = 1$ for all $t$).</p>
+
+  <p style="margin-top:16px"><strong>Why labels can never change the total.</strong> Substitute $\mt_t$ into the token-weighted sum: the renormalizer $\sum_s \wt_s \len_s$ is <em>exactly</em> the denominator, so it cancels — leaving $L$ no matter what the $\wt_t$ (hence the labels) are:</p>
+  <div class="eq">$$\sum_t \mt_t \len_t \;=\; \frac{L}{\displaystyle\sum_s \wt_s \len_s}\;\sum_t \wt_t \len_t \;=\; L \qquad\Longrightarrow\qquad \sum_t A^{\text{tok}}_t \len_t \;=\; \adv \sum_t \mt_t \len_t \;=\; \adv\,L$$</div>
+
+  <p>Concretely, three different label assignments for the 5-turn example ($\len_s = 40$, $L = 200$, $\al = 0.5$, sign$(\adv) = +1$). The per-turn normalizer $\sum_s \wt_s \len_s$ differs every time, yet the conserved mass $\sum_t \mt_t \len_t$ is always $L$:</p>
+
+  <table class="ex">
+    <thead><tr><th>Labels $\vt_t$</th><th>Raw $\wt_t$</th><th>$\sum_s \wt_s\len_s$</th><th>$\sum_t \mt_t\len_t$</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">[0, −1, +1, +1, +2]</td><td class="mono">[1.0, 0.5, 1.5, 1.5, 2.0]</td><td class="mono">260</td><td class="mono"><span class="vpos">200 = L ✓</span></td></tr>
+      <tr><td class="mono">[+1, +1, +1, +1, +1]<br><span style="font-size:11px;color:var(--dim)">all PROGRESS (the hack)</span></td><td class="mono">[1.5, 1.5, 1.5, 1.5, 1.5]</td><td class="mono">300</td><td class="mono"><span class="vpos">200 = L ✓</span></td></tr>
+      <tr><td class="mono">[−1, +2, 0, −1, +1]</td><td class="mono">[0.5, 2.0, 1.0, 0.5, 1.5]</td><td class="mono">220</td><td class="mono"><span class="vpos">200 = L ✓</span></td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--mid)">The "all PROGRESS" row is the inflation attack: every $\mt_t = 1.0$, <em>identical</em> to vanilla GRPO. Labelling every turn PROGRESS redistributes nothing — it buys the policy nothing. Labels only ever <em>move</em> mass between turns; they can never add or remove it.</p>
+
+  <h3>Anti-hack design</h3>
+  <p><strong>Why the policy wants to inflate labels.</strong> Look at the gradient update for a single token in turn $t$ of a successful rollout ($\adv > 0$):</p>
+  <div class="eq">$$\Delta\theta \;\propto\; \underbrace{\adv \cdot \mt_t}_{A^{\text{tok}}_t} \cdot \nabla\log\pol_\theta(a_t \mid s_t)$$</div>
+  <p>A larger $\mt_t$ means a stronger push to repeat those tokens. In the success example: labelling turn 3 PROGRESS ($\mt = 1.154$) vs. NEUTRAL ($\mt = 0.769$) gives its tokens <strong>50% more gradient reinforcement</strong>. The policy is its own judge — and it benefits from judging itself generously. The self-serving optimum is to label every turn PROGRESS or ACHIEVED, claiming maximum credit everywhere.</p>
+
+  <p><strong>In failed rollouts the incentive flips.</strong> With $\adv < 0$, a larger $\mt_t$ means more blame. The policy minimises blame by labelling turns ACHIEVED ($\wt = 0$, so $\mt = 0$ — escaping all blame) or PROGRESS ($\wt = 0.5$, half the blame of NEUTRAL). Both are modes of mislabelling to dodge the gradient's punishment.</p>
+
+  <p>These two failure modes need <em>different</em> mitigations. Four levers address them — the first two are always on, the last two are config flags on <code>SelfJudgeConfig</code> (both default <code>true</code>):</p>
+  <table class="ah">
+    <thead><tr><th>Mitigation</th><th>Mechanism</th><th>Failure mode addressed</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Token-mass preservation</td>
+        <td>$\mt_t$ renormalization (<code>self_judge.py:182</code>); inflation of all labels → uniform weights → vanilla GRPO (proved above)</td>
+        <td><strong>Success-case inflation.</strong> Labelling every turn PROGRESS sets all $\wt_t = 1.5$, which renormalises to $\mt_t = 1.0$ for every turn — identical to flat GRPO. The policy cannot extract more total gradient by labelling generously; it can only redistribute it.</td>
+      </tr>
+      <tr>
+        <td>Untrained label side-channel</td>
+        <td>Label is a separate short judge completion fired from <code>env_response</code>; its tokens are never recorded as a trajectory step (<code>self_judge_wrapper.py</code>)</td>
+        <td><strong>Format gaming.</strong> Because the label never enters the action token stream, there is no in-band format to satisfy and no label tokens to reward — the grade only ever <em>reshapes</em> the action tokens' advantages, never receives gradient itself.</td>
+      </tr>
+      <tr>
+        <td>Flip false ACHIEVED</td>
+        <td>In failed rollouts, ACHIEVED → REGRESS (<code>flip_false_achieved</code>, <code>self_judge.py:172</code>)</td>
+        <td><strong>Confident-failure dodge.</strong> A rollout that failed eval but self-labels ACHIEVED would otherwise get $\wt \approx 0$ (least blame). The eval is ground truth, so this high-confidence mistake should attract <em>maximum</em> blame instead.</td>
+      </tr>
+      <tr>
+        <td>Clamp fail dampening</td>
+        <td>In failed rollouts, clamp $\wt_t \ge 1$ (<code>clamp_fail_dampening</code>, <code>self_judge.py:179</code>)</td>
+        <td><strong>Optimistic-blame dodge.</strong> A wrong action mislabelled PROGRESS would get $\wt=0.5$ (less blame), shifting that blame onto innocent NEUTRAL turns. Clamping ensures PROGRESS-in-fail gets at least full scalar blame.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Complete worked example — successful rollout</h3>
+  <p><strong>Step 0 — where the scalar $\adv$ comes from.</strong> This is rollout #1 of the $K=4$ group introduced in §01: outcome $\rew = 0.75$, group-mean baseline $\val = 0.40$, so its scalar GRPO advantage is $\adv = 0.75 - 0.40 = +0.35$. Vanilla GRPO would broadcast this $+0.35$ to all 200 tokens; the self-judge reshapes it instead.</p>
+  <p>5 turns, 40 tokens each, $L = 200$, $\al = 0.5$, sign$(\adv) = +1$. <strong>Step 1 — raw per-turn weights</strong> $\wt_t = 1 + \al\,\vt_t\,\operatorname{sign}(\adv)$:</p>
+
+  <div class="eq" style="border-left-color:var(--c-adv)">
+    $$\wt_t = 1 + 0.5 \cdot \vt_t \cdot (+1): \quad [1.0,\; 0.5,\; 1.5,\; 1.5,\; 2.0]$$
+    $$\textstyle\sum \wt_s \len_s = (1.0+0.5+1.5+1.5+2.0)\times40 = 260, \quad \mt_t = \wt_t \times \tfrac{200}{260} = \wt_t \times 0.769$$
+  </div>
+
+  <table class="ex">
+    <thead>
+      <tr><th>Turn</th><th>Label</th><th>$v_t$</th><th>$w_t$</th><th>$m_t$</th><th>$A^{\text{tok}}_t = 0.35 \times m_t$</th><th>vs. GRPO (+0.350)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="mono">1</td><td><span class="chip neutral">NEUTRAL</span></td><td class="mono">0</td><td class="mono">1.0</td><td class="mono">0.769</td><td><span class="vpos">+0.269</span></td><td style="font-size:12px;color:var(--mid)">−23% standard</td></tr>
+      <tr><td class="mono">2</td><td><span class="chip regress">REGRESS</span></td><td class="mono">−1</td><td class="mono">0.5</td><td class="mono">0.385</td><td><span class="vdamp">+0.135</span></td><td style="font-size:12px;color:var(--c-disc)">−61% dampened ↓</td></tr>
+      <tr><td class="mono">3</td><td><span class="chip progress">PROGRESS</span></td><td class="mono">+1</td><td class="mono">1.5</td><td class="mono">1.154</td><td><span class="vhi">+0.404</span></td><td style="font-size:12px;color:var(--c-adv)">+15% amplified ↑</td></tr>
+      <tr><td class="mono">4</td><td><span class="chip progress">PROGRESS</span></td><td class="mono">+1</td><td class="mono">1.5</td><td class="mono">1.154</td><td><span class="vhi">+0.404</span></td><td style="font-size:12px;color:var(--c-adv)">+15% amplified ↑</td></tr>
+      <tr><td class="mono">5</td><td><span class="chip achieved">ACHIEVED</span></td><td class="mono">+2</td><td class="mono">2.0</td><td class="mono">1.538</td><td><span class="vmax">+0.538</span></td><td style="font-size:12px;color:var(--c-ret)">+54% max amplified ↑↑</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--mid)">Check: $(0.269+0.135+0.404+0.404+0.538)\times40 = 70 = 0.35\times200$ ✓ — total gradient mass unchanged.</p>
+
+  <!-- token-mass redistribution: height ∝ m_t, total shaded area conserved -->
+  <div class="panel" style="padding:14px 16px;margin-top:14px">
+    <div style="font-family:var(--mono);font-size:11px;color:var(--mid);margin-bottom:10px">Token-mass view · 200 tokens (5 turns × 40) · bar height ∝ multiplier $\mt_t$ · <strong>total shaded area is conserved</strong></div>
+
+    <div style="font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-bottom:3px">GRPO — every token ×1.0 (flat broadcast)</div>
+    <div style="display:flex;gap:3px;height:30px;margin-bottom:14px">
+      <div style="flex:1;background:var(--c-adv);opacity:.26;border-radius:2px"></div>
+      <div style="flex:1;background:var(--c-adv);opacity:.26;border-radius:2px"></div>
+      <div style="flex:1;background:var(--c-adv);opacity:.26;border-radius:2px"></div>
+      <div style="flex:1;background:var(--c-adv);opacity:.26;border-radius:2px"></div>
+      <div style="flex:1;background:var(--c-adv);opacity:.26;border-radius:2px"></div>
+    </div>
+
+    <div style="font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-bottom:3px">Self-judge — rescaled by $\mt_t$ (same total area)</div>
+    <div style="display:flex;gap:3px;height:46px;align-items:flex-end">
+      <div style="flex:1;height:23px;background:var(--c-adv);opacity:.72;border-radius:2px"></div>
+      <div style="flex:1;height:12px;background:var(--c-adv);opacity:.72;border-radius:2px"></div>
+      <div style="flex:1;height:35px;background:var(--c-adv);opacity:.72;border-radius:2px"></div>
+      <div style="flex:1;height:35px;background:var(--c-adv);opacity:.72;border-radius:2px"></div>
+      <div style="flex:1;height:46px;background:var(--c-adv);opacity:.72;border-radius:2px"></div>
+    </div>
+    <div style="display:flex;gap:3px;margin-top:4px">
+      <div style="flex:1;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--dim)">T1 ×0.77</div>
+      <div style="flex:1;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--c-disc)">T2 ×0.38</div>
+      <div style="flex:1;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--c-adv)">T3 ×1.15</div>
+      <div style="flex:1;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--c-adv)">T4 ×1.15</div>
+      <div style="flex:1;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--c-ret)">T5 ×1.54</div>
+    </div>
+  </div>
+
+  <h3>The effect of α — sweep the strength</h3>
+  <p>$\al$ is the single knob for how hard labels reshape the advantage. At $\al=0$ every multiplier is $1$ and the bars are flat — <em>identical to vanilla GRPO</em>. As $\al$ rises, good turns pull gradient mass from bad ones; the total shaded mass is always conserved (bars rescale, the sum is fixed). Same successful rollout as above: labels $[0,-1,+1,+1,+2]$, $\adv=+0.35$, equal-length turns.</p>
+
+  <div class="panel" id="alpha-wrap" style="padding:16px 18px;margin:16px 0">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px">
+      <span style="font-family:var(--mono);font-size:12px;color:var(--mid)">$\al$ =</span>
+      <span id="alphaVal" style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--c-al);min-width:44px">0.50</span>
+      <input id="alphaSlider" type="range" min="0" max="1" step="0.01" value="0.5" style="flex:1;min-width:170px;accent-color:var(--c-al);cursor:pointer" oninput="alphaSet(parseFloat(this.value), true)">
+    </div>
+
+    <div style="display:flex;gap:6px;height:128px;align-items:flex-end" id="alpha-bars">
+      <div class="acol"><div class="aval" id="av0">+0.350</div><div class="abar" id="ab0"></div></div>
+      <div class="acol"><div class="aval" id="av1">+0.350</div><div class="abar" id="ab1"></div></div>
+      <div class="acol"><div class="aval" id="av2">+0.350</div><div class="abar" id="ab2"></div></div>
+      <div class="acol"><div class="aval" id="av3">+0.350</div><div class="abar" id="ab3"></div></div>
+      <div class="acol"><div class="aval" id="av4">+0.350</div><div class="abar" id="ab4"></div></div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:5px;border-top:1px dashed var(--line);padding-top:6px">
+      <div style="flex:1;text-align:center"><span class="chip neutral">NEUTRAL</span><div class="turn-n">Turn 1</div></div>
+      <div style="flex:1;text-align:center"><span class="chip regress">REGRESS</span><div class="turn-n">Turn 2</div></div>
+      <div style="flex:1;text-align:center"><span class="chip progress">PROGRESS</span><div class="turn-n">Turn 3</div></div>
+      <div style="flex:1;text-align:center"><span class="chip progress">PROGRESS</span><div class="turn-n">Turn 4</div></div>
+      <div style="flex:1;text-align:center"><span class="chip achieved">ACHIEVED</span><div class="turn-n">Turn 5</div></div>
+    </div>
+    <div style="font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:10px" id="alpha-note">α = 0.50 · labels redistribute the fixed mass across turns</div>
+  </div>
+  <p style="font-size:13px;color:var(--mid)">At $\al=1$ the REGRESS turn is driven to the $\varepsilon$ floor (almost no gradient) and ACHIEVED nearly doubles; at $\al=0$ the five bars collapse to a flat $+0.350$ — the self-judge becomes a no-op. <code>alpha</code> defaults to $0.3$ in <code>SelfJudgeConfig</code>; the AutomationBench runs use $0.5$.</p>
+
+  <h3>Complete worked example — failed rollout (clamp_fail_dampening only)</h3>
+  <p><strong>Step 0.</strong> This is rollout #2 of the same §01 group: outcome $\rew = 0.00$, baseline $\val = 0.40$, so $\adv = 0.00 - 0.40 = -0.40$. Same labels as the success case, but this rollout failed, so sign$(\adv) = -1$ and the weighting flips. Without the clamp, PROGRESS turns ($\wt = 0.5$) would get <em>less</em> blame — the clamp corrects this.</p>
+  <p style="font-size:13px;color:var(--mid)">To isolate the clamp, this example assumes <code>flip_false_achieved = false</code>. With the default <code>true</code>, turn 5's ACHIEVED would first become REGRESS (a confident failure → max blame), giving $\wt^{\text{raw}} = 1.5$ before the clamp instead of $0.0 \to 1.0$.</p>
+
+  <div class="eq" style="border-left-color:var(--c-rew)">
+    $$\wt_t^{\text{raw}} = 1 + 0.5 \cdot \vt_t \cdot (-1): \quad [1.0,\; 1.5,\; 0.5\!\to\!1.0,\; 0.5\!\to\!1.0,\; 0.0\!\to\!1.0]$$
+    $$\textstyle\sum \wt_s \len_s = (1.0+1.5+1.0+1.0+1.0)\times40 = 220, \quad \mt_t = \wt_t \times \tfrac{200}{220} = \wt_t \times 0.909$$
+  </div>
+
+  <table class="ex">
+    <thead>
+      <tr><th>Turn</th><th>Label</th><th>$w_t^{\text{raw}}$</th><th>$w_t^{\text{clamped}}$</th><th>$A^{\text{tok}}_t = -0.40 \times m_t$</th><th>Effect</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="mono">1</td><td><span class="chip neutral">NEUTRAL</span></td><td class="mono">1.0</td><td class="mono">1.0</td><td><span class="vneg">−0.364</span></td><td style="font-size:12px;color:var(--mid)">full blame</td></tr>
+      <tr><td class="mono">2</td><td><span class="chip regress">REGRESS</span></td><td class="mono">1.5</td><td class="mono">1.5</td><td><span class="vneg" style="color:var(--c-rew)">−0.545</span></td><td style="font-size:12px;color:var(--c-rew)">max blame — punished ↓↓</td></tr>
+      <tr><td class="mono">3</td><td><span class="chip progress">PROGRESS</span></td><td class="mono" style="color:var(--c-disc)">0.5 →</td><td class="mono">1.0</td><td><span class="vneg">−0.364</span></td><td style="font-size:12px;color:var(--c-disc)">clamped — full blame (not protected)</td></tr>
+      <tr><td class="mono">4</td><td><span class="chip progress">PROGRESS</span></td><td class="mono" style="color:var(--c-disc)">0.5 →</td><td class="mono">1.0</td><td><span class="vneg">−0.364</span></td><td style="font-size:12px;color:var(--c-disc)">clamped — full blame</td></tr>
+      <tr><td class="mono">5</td><td><span class="chip achieved">ACHIEVED</span></td><td class="mono" style="color:var(--c-disc)">0.0 →</td><td class="mono">1.0</td><td><span class="vneg">−0.364</span></td><td style="font-size:12px;color:var(--c-disc)">clamped — full blame (was zero!)</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--mid)">The regressing turn-2 absorbs maximum blame. PROGRESS/ACHIEVED turns that were <em>mislabelled</em> (the trajectory still failed) receive the same full blame as NEUTRAL, not reduced blame.</p>
+
+  <div class="note good">
+    <strong>The sign-aware insight.</strong> At $\alpha=0.5$ in a <em>successful</em> rollout: PROGRESS→×1.5, ACHIEVED→×2.0, REGRESS→×0.5. In a <em>failed</em> rollout: REGRESS→×1.5 (max blame), NEUTRAL/PROGRESS→×1.0 (full scalar blame). Differential labels create signal; uniform labels collapse back to vanilla GRPO by construction.
+  </div>
+</section>
+
+
+<!-- ── §06: Interactive comparison chart ──────────────────── -->
+<section>
+  <h2 id="s06"><span class="n">06</span>Interactive comparison: per-token advantage by turn</h2>
+  <p>The chart shows the per-token advantage for each of the 5 turns in the worked example above. Switch between approaches to see how the advantage redistributes.</p>
+
+  <div class="chart-wrap">
+    <div class="chart-title">Per-token advantage $A^{\text{tok}}_t$ by turn · VLC task · click to switch approach</div>
+    <div class="chart-btns">
+      <button class="cb on" data-k="grpo"       onclick="setCh(this,'grpo')">A: GRPO (scalar broadcast)</button>
+      <button class="cb"    data-k="sj_success" onclick="setCh(this,'sj_success')">B: Self-judge, success (A=+0.35)</button>
+      <button class="cb"    data-k="sj_fail"    onclick="setCh(this,'sj_fail')">B: Self-judge, fail (A=−0.40)</button>
+    </div>
+
+    <div class="chart-body">
+      <div class="chart-yaxis">
+        <span>+0.6</span><span>+0.3</span><span style="color:var(--mid)">0</span><span>−0.3</span><span>−0.6</span>
+      </div>
+      <div class="chart-cols" id="chartcols">
+
+        <div class="chart-col">
+          <div class="above"><div class="bpos" id="bp0"></div></div>
+          <div class="below"><div class="bneg" id="bn0"></div></div>
+          <div class="col-foot">
+            <div class="val-lbl" id="vl0">+0.350</div>
+            <span class="chip neutral" id="cl0">NEUTRAL</span>
+            <div class="turn-n">Turn 1</div>
+          </div>
+        </div>
+
+        <div class="chart-col">
+          <div class="above"><div class="bpos" id="bp1"></div></div>
+          <div class="below"><div class="bneg" id="bn1"></div></div>
+          <div class="col-foot">
+            <div class="val-lbl" id="vl1">+0.350</div>
+            <span class="chip regress" id="cl1">REGRESS</span>
+            <div class="turn-n">Turn 2</div>
+          </div>
+        </div>
+
+        <div class="chart-col">
+          <div class="above"><div class="bpos" id="bp2"></div></div>
+          <div class="below"><div class="bneg" id="bn2"></div></div>
+          <div class="col-foot">
+            <div class="val-lbl" id="vl2">+0.350</div>
+            <span class="chip progress" id="cl2">PROGRESS</span>
+            <div class="turn-n">Turn 3</div>
+          </div>
+        </div>
+
+        <div class="chart-col">
+          <div class="above"><div class="bpos" id="bp3"></div></div>
+          <div class="below"><div class="bneg" id="bn3"></div></div>
+          <div class="col-foot">
+            <div class="val-lbl" id="vl3">+0.350</div>
+            <span class="chip progress" id="cl3">PROGRESS</span>
+            <div class="turn-n">Turn 4</div>
+          </div>
+        </div>
+
+        <div class="chart-col">
+          <div class="above"><div class="bpos" id="bp4"></div></div>
+          <div class="below"><div class="bneg" id="bn4"></div></div>
+          <div class="col-foot">
+            <div class="val-lbl" id="vl4">+0.350</div>
+            <span class="chip achieved" id="cl4">ACHIEVED</span>
+            <div class="turn-n">Turn 5</div>
+          </div>
+        </div>
+
+      </div><!-- chart-cols -->
+    </div><!-- chart-body -->
+  </div><!-- chart-wrap -->
+
+  <div class="callout" id="chart-caption">
+    <strong>A: Vanilla GRPO.</strong> All five turns receive identical advantage +0.350. The regressing turn-2 is reinforced as strongly as the final success. No temporal structure reaches the gradient.
+  </div>
+</section>
+
+
+<!-- ── §07: Guidance ───────────────────────────────────────── -->
+<section>
+  <h2 id="s07"><span class="n">07</span>When to use which approach</h2>
+
+  <div class="note good">
+    <strong>Start with A (GRPO) unless you have intra-group variance collapse.</strong> GRPO is simple, stable, and the right default. Move to B only when you can observe the stall mode: all-zero or near-zero advantages across a group, no learning.
+  </div>
+
+  <div class="note">
+    <strong>Use B (self-judge) when:</strong> Dense scalar reward unblocks training (variance relief works) but you need further discrimination <em>within</em> a rollout — e.g. long multi-turn episodes where one bad action at step 2 of 30 drags down 30 good actions. Watch for anti-hack violation rates in the metrics.
+  </div>
+
+  <div class="callout">
+    <strong>Two different bottlenecks — don't confuse them.</strong>
+    <ul style="margin:8px 0 0">
+      <li><strong>Group collapse (variance, <em>across</em> rollouts).</strong> GRPO has no critic; the advantage is purely relative: $A_i = \rew_i - \bar{\rew}_{\text{group}}$. If every rollout in a group scores the same (all fail → all $0$, or all succeed → all $1$), the mean equals each reward, <em>every</em> advantage is $0$, and the gradient vanishes. The signal comes entirely from intra-group <em>spread</em> — zero spread, zero learning.</li>
+      <li><strong>Credit misassignment (<em>within</em> a rollout).</strong> One bad action at turn 2 drags down 30 good actions because they all share one scalar — the problem B addresses.</li>
+    </ul>
+  </div>
+  <p>A principled test before moving from A to B: ship a scalar milestone-fraction ($M/N$) reward first. A denser scalar spreads a collapsed group's rewards across a range → non-zero variance → gradient flows again — <em>without</em> any within-rollout credit. So if that alone unblocks training, the bottleneck was group collapse, not credit assignment, and B adds nothing. Only if a dense scalar <em>doesn't</em> unblock it — yet you can point to specific trajectories where one late mistake punishes earlier good steps — is per-step redistribution (B) solving a real problem.</p>
+
+  <table class="cmp" style="margin-top:14px">
+    <thead><tr><th>Condition</th><th>Recommended approach</th></tr></thead>
+    <tbody>
+      <tr><td>Sparse outcome reward, short episodes</td><td>A — the simplest correct baseline</td></tr>
+      <tr><td>All rollouts fail (group collapse)</td><td>A + denser scalar reward (milestone fraction) to restore variance</td></tr>
+      <tr><td>Long multi-turn; one bad step penalizes many good ones</td><td>B — redistribute within-rollout credit</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  <div>per_step_reward.html · branch: per-step-judge-reward</div>
+  <div>Approach A verified against: <code>transport/types.py:37,41</code> · <code>orchestrator/advantage.py:70</code> · <code>trainer/batch.py:60</code> · <code>trainer/rl/loss.py:151</code></div>
+  <div>Approach B (self-judge) implemented in: <code>orchestrator/self_judge.py</code> · <code>environments/self_judge_wrapper/self_judge_wrapper.py</code> · config <code>SelfJudgeConfig</code> (<code>packages/prime-rl-configs/.../configs/orchestrator.py:445</code>)</div>
+</footer>
+
+</div><!-- wrap -->
+
+<script>
+// ── Interactive bar chart ──────────────────────────────────────────────────
+// All values are per-token advantage A^tok_t for the 5-turn VLC example.
+// Positive = green bar above baseline; negative = red bar below baseline.
+const scenarios = {
+  grpo:       { vals: [+0.350, +0.350, +0.350, +0.350, +0.350] },
+  sj_success: { vals: [+0.269, +0.135, +0.404, +0.404, +0.538] },
+  sj_fail:    { vals: [-0.364, -0.545, -0.364, -0.364, -0.364] }
+};
+
+const captions = {
+  grpo:       '<strong>A: Vanilla GRPO.</strong> All five turns receive identical advantage +0.350. The regressing turn-2 is reinforced as strongly as the final success. No temporal structure reaches the gradient.',
+  sj_success: '<strong>B: Self-judge, successful rollout (A=+0.35).</strong> Good turns are amplified: PROGRESS×1.5, ACHIEVED×2.0. The regressing turn-2 is dampened to 0.135 (−61% vs GRPO). Total gradient mass is unchanged — only its distribution shifts.',
+  sj_fail:    '<strong>B: Self-judge, failed rollout (A=−0.40) with clamp_fail_dampening.</strong> The sign flips: REGRESS now takes <em>maximum blame</em> (−0.545). PROGRESS/ACHIEVED turns are clamped to full scalar blame instead of being protected — mislabelled confidence is not rewarded.'
+};
+
+const MAX_VAL = 0.6;
+const ZONE_H = 130; // px above / below baseline
+
+function setCh(btn, key) {
+  // Update active button
+  document.querySelectorAll('.cb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+
+  const vals = scenarios[key].vals;
+  vals.forEach((v, i) => {
+    const bp = document.getElementById('bp' + i);
+    const bn = document.getElementById('bn' + i);
+    const vl = document.getElementById('vl' + i);
+
+    const h = Math.round(Math.min(Math.abs(v), MAX_VAL) / MAX_VAL * ZONE_H);
+
+    if (v >= 0) {
+      bp.style.height = h + 'px';
+      bp.style.background = '#2f6f4f';
+      bn.style.height = '0px';
+      vl.textContent = '+' + v.toFixed(3);
+      vl.style.color = '#2f6f4f';
+    } else {
+      bp.style.height = '0px';
+      bn.style.height = h + 'px';
+      bn.style.background = '#c0392b';
+      vl.textContent = v.toFixed(3);
+      vl.style.color = '#c0392b';
+    }
+  });
+
+  document.getElementById('chart-caption').innerHTML = captions[key];
+}
+
+// Initialize on load
+window.addEventListener('load', function() {
+  setCh(document.querySelector('.cb.on'), 'grpo');
+});
+
+// ── Judge-after-observation animation ──────────────────────────────────────
+// One AutomationBench "update a contact" rollout. The observation o_{t+1} is what
+// the judge now sees — turn 3 issues a plausible update that errors → REGRESS.
+const J_TURNS = [
+  { action: 'search_tools("update contact")',                obs: 'found: salesforce.update_contact, find_contact', kind: 'neutral', label: 'NEUTRAL'  },
+  { action: 'execute_tool(find_contact, name="Jordan Lee")', obs: '1 match: id=003x12af',                          kind: 'ok',      label: 'PROGRESS' },
+  { action: 'execute_tool(update_contact, phone="…")',       obs: "Error: field 'phone' is not writeable",         kind: 'err',     label: 'REGRESS'  },
+  { action: 'execute_tool(update_contact, mobilePhone="…")', obs: 'success: updated mobilePhone',                  kind: 'ok',      label: 'PROGRESS' },
+  { action: 'done()',                                        obs: 'task complete · reward 1.0',                    kind: 'ok',      label: 'ACHIEVED' },
+];
+const J_LABEL_COLORS = { REGRESS: 'var(--c-rew)', NEUTRAL: 'var(--mid)', PROGRESS: 'var(--c-adv)', ACHIEVED: 'var(--c-ret)' };
+const J_OBS_STYLE = {
+  ok:      { border: '#cfe3d5',      bg: '#eaf2ec',      color: 'var(--progress)' },
+  err:     { border: '#f5c6c3',      bg: '#fdecea',      color: 'var(--c-rew)' },
+  neutral: { border: 'var(--line)',  bg: 'transparent',  color: 'var(--mid)' },
+};
+let jPhase = 0, jTimer = null, jPaused = false;
+const J_INTERVAL = 2700;
+
+function jStep() {
+  const t = J_TURNS[jPhase % 5];
+  ['j-action','j-obs','j-label'].forEach(id => document.getElementById(id).style.opacity = '0');
+  const prefix = document.getElementById('j-prefix');
+  prefix.style.boxShadow = '0 0 0 2px var(--accent)';
+  document.getElementById('jTurn').textContent = 'turn ' + (jPhase % 5 + 1) + '/5';
+
+  setTimeout(() => {
+    document.getElementById('j-action-val').textContent = t.action;
+    document.getElementById('j-action').style.opacity = '1';
+    setTimeout(() => {
+      const o = document.getElementById('j-obs'), os = J_OBS_STYLE[t.kind];
+      const ov = document.getElementById('j-obs-val');
+      ov.textContent = t.obs; ov.style.color = os.color;
+      o.style.borderColor = os.border; o.style.background = os.bg; o.style.opacity = '1';
+      setTimeout(() => {
+        const lv = document.getElementById('j-label-val');
+        lv.textContent = t.label; lv.style.color = J_LABEL_COLORS[t.label];
+        document.getElementById('j-label').style.opacity = '1';
+        prefix.style.boxShadow = '';
+      }, 700);
+    }, 700);
+  }, 250);
+  jPhase++;
+}
+function jPlay()  { if (jTimer) return; jStep(); jTimer = setInterval(jStep, J_INTERVAL); document.getElementById('jBtn').textContent = '⏸ pause'; }
+function jPause() { if (!jTimer) return; clearInterval(jTimer); jTimer = null; document.getElementById('jBtn').textContent = '▶ play'; }
+function jToggle(){ if (jTimer) { jPause(); jPaused = true; } else { jPaused = false; jPlay(); } }
+const jWrap = document.getElementById('judge-wrap');
+if (jWrap) {
+  new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting && !jPaused) jPlay(); else if (!e.isIntersecting) jPause(); });
+  }, { threshold: 0.3 }).observe(jWrap);
+}
+
+// ── Alpha-sweep bars ────────────────────────────────────────────────────────
+// Successful rollout: labels [0,-1,+1,+1,+2], A=+0.35, equal-length turns.
+// w_t = max(eps, 1 + alpha*v_t); m_t = w_t * N / sum(w); A_tok = A * m_t.
+const ALPHA_V = [0, -1, 1, 1, 2];
+const A_SCALAR = 0.35, A_EPS = 0.05, A_MAXH = 116, A_MAXVAL = 0.7;
+
+function alphaCompute(al) {
+  const w = ALPHA_V.map(v => Math.max(A_EPS, 1 + al * v));   // sign(A) = +1 (success)
+  const sw = w.reduce((a, b) => a + b, 0);
+  return w.map(wt => A_SCALAR * wt * ALPHA_V.length / sw);   // equal lengths → len cancels
+}
+function alphaSet(al, fromSlider) {
+  document.getElementById('alphaVal').textContent = al.toFixed(2);
+  if (!fromSlider) document.getElementById('alphaSlider').value = al;
+  alphaCompute(al).forEach((v, i) => {
+    document.getElementById('ab' + i).style.height = Math.round(Math.min(v, A_MAXVAL) / A_MAXVAL * A_MAXH) + 'px';
+    document.getElementById('av' + i).textContent = '+' + v.toFixed(3);
+  });
+  document.getElementById('alpha-note').textContent = al < 0.02
+    ? 'α = ' + al.toFixed(2) + ' · all multipliers = 1 → identical to vanilla GRPO (flat)'
+    : 'α = ' + al.toFixed(2) + ' · labels redistribute the fixed mass across turns';
+}
+// Manual only — drag the slider; no autoplay.
+alphaSet(0.5, false);
+
+// ── Table of contents: toggle + scrollspy ──────────────────────────────────
+function toggleToc() {
+  const toc = document.getElementById('toc');
+  const btn = document.getElementById('tocToggle');
+  const shown = !toc.hasAttribute('hidden');
+  if (shown) { toc.setAttribute('hidden', ''); } else { toc.removeAttribute('hidden'); }
+  btn.setAttribute('aria-expanded', String(!shown));
+}
+
+// On narrow screens, start collapsed (the panel would otherwise overlay the text).
+if (window.matchMedia('(max-width: 1180px)').matches) {
+  document.getElementById('toc').setAttribute('hidden', '');
+  document.getElementById('tocToggle').setAttribute('aria-expanded', 'false');
+}
+
+// Highlight the section currently in view.
+const tocLinks = Array.from(document.querySelectorAll('.toc a'));
+const sections = tocLinks.map(a => document.querySelector(a.getAttribute('href')));
+const spy = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (!e.isIntersecting) return;
+    const i = sections.indexOf(e.target);
+    tocLinks.forEach(a => a.classList.remove('active'));
+    if (i >= 0) tocLinks[i].classList.add('active');
+  });
+}, { rootMargin: '0px 0px -75% 0px', threshold: 0 });
+sections.forEach(s => { if (s) spy.observe(s); });
+</script>
+</body>
+</html>
